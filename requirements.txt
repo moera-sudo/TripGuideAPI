@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+fastapi-mail
+asyncpg
+passlib
+python-jose
+bcrypt
+logging
+sqlalchemy
