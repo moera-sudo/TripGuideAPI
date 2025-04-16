@@ -11,6 +11,7 @@ from models.users import Users
 from schemas.auth import Token, TokenData, LoginRequest, Tokens
 from schemas.user import UserCreate, UserVerified, UserVerify
 from services.AuthService import AuthService
+from services.EmailService import EmailService
 
 router = APIRouter(
     prefix='/auth',
@@ -41,7 +42,7 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
 
         verification_code = AuthService.generate_verification_code()
 
-        #TODO Добавить отправку кода
+        EmailService.send_verification_email(user_data.email, verification_code)
 
         new_user = Users(
             email=user_data.email,
@@ -99,8 +100,6 @@ async def login(user_data: LoginRequest, db: AsyncSession = Depends(get_db)):
     try:
 
         user = await AuthService.authenticate_user(db=db, user_data=user_data)
-        print(f"ID: {user.id}, email: {user.email} ({type(user.email)}), nickname: {user.nickname} ({type(user.nickname)})")
-        print(f"user_data.password: {user_data.password}")
         token_data = TokenData(
             sub=str(user.id),
             email=user.email,
