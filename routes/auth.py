@@ -10,7 +10,7 @@ from config.appsettings import Settings
 from config.database import get_db
 from models.users import Users
 from models.refreshtokens import RefreshTokens
-from schemas.auth import Token, TokenData, LoginRequest, Tokens
+from schemas.auth import RefreshTokenRequest, Token, TokenData, LoginRequest, Tokens
 from schemas.user import UserCreate, UserVerified, UserVerify
 from services.AuthService import AuthService
 from services.EmailService import EmailService
@@ -138,6 +138,75 @@ async def login(user_data: LoginRequest, db: AsyncSession = Depends(get_db)):
             detail=f'Login error occured: {e}'
         )
 
+
+
+@router.post('/refresh', response_model=Tokens, status_code=status.HTTP_200_OK)
+async def refresh_token(token: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        refresh_token = token.refresh_token
+        # Декодируем и проверяем тип токена
+        token_data = AuthService.decode_jwt_token(refresh_token, 'refresh')
+
+        # Получаем пользователя
+        user = await AuthService.get_user_by_id(db, int(token_data.sub))
+        if not user:
+            raise HTTPException(status_code=404, detail='User not found')
+
+        # Ищем среди токенов совпадение по хэшу
+        stmt = select(RefreshTokens).where(
+            RefreshTokens.user_id == user.id,
+            RefreshTokens.is_revoked == False
+        )
+        result = await db.execute(stmt)
+        active_tokens = result.scalars().all()
+
+        matched_token = next(
+            (
+                t for t in active_tokens
+                if AuthService.verify_password(refresh_token, t.token) and t.is_valid
+            ),
+            None
+        )
+
+
+        if not matched_token:
+            raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+        # Ревокация старого токена
+        matched_token.is_revoked = True
+        matched_token.revoked_at = datetime.utcnow()
+
+        # Создаём новые токены
+        access_token = AuthService.create_jwt_token(token_data, 'access')
+        new_refresh_token = AuthService.create_jwt_token(token_data, 'refresh')
+        hashed_refresh_token = AuthService.get_password_hash(new_refresh_token)
+
+        # Сохраняем новый refresh token
+        expires_at = datetime.utcnow() + timedelta(days=Settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        new_token_entry = RefreshTokens(
+            token=hashed_refresh_token,
+            user_id=user.id,
+            expires_at=expires_at
+        )
+        db.add(new_token_entry)
+
+        await db.commit()
+        await db.refresh(new_token_entry)
+
+        return {
+            "access_token": access_token,
+            "refresh_token": new_refresh_token,
+            "token_type": "bearer"
+        }
+
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Refresh token error: {e}"
+        )
+
+
 # TODO написать роут обновления рефреш токена 
 @router.post('/logout', status_code=status.HTTP_202_ACCEPTED)
 async def logout(user: Users = Depends(AuthService.get_current_user), db: AsyncSession = Depends(get_db)):
@@ -165,13 +234,3 @@ async def logout(user: Users = Depends(AuthService.get_current_user), db: AsyncS
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Log out error: {str(e)}"
         )
-
-
-
-        
-        
-        
-
-        
-
-        
