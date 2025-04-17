@@ -1,13 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from typing import Annotated, Dict, Any
-from datetime import timedelta
+from datetime import timedelta, datetime
 
 from config.appsettings import Settings
 from config.database import get_db
 from models.users import Users
+from models.refreshtokens import RefreshTokens
 from schemas.auth import Token, TokenData, LoginRequest, Tokens
 from schemas.user import UserCreate, UserVerified, UserVerify
 from services.AuthService import AuthService
@@ -42,7 +44,7 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
 
         verification_code = AuthService.generate_verification_code()
 
-        EmailService.send_verification_email(user_data.email, verification_code)
+        await EmailService.send_verification_email(user_data.email, verification_code)
 
         new_user = Users(
             email=user_data.email,
@@ -109,16 +111,59 @@ async def login(user_data: LoginRequest, db: AsyncSession = Depends(get_db)):
         access_token = AuthService.create_jwt_token(token_data, 'access')
         refresh_token = AuthService.create_jwt_token(token_data, 'refresh')
 
+        hashed_refresh_token = AuthService.get_password_hash(refresh_token)
+
+        refresh_token_expire = datetime.utcnow() + timedelta(days=Settings.REFRESH_TOKEN_EXPIRE_DAYS)
+
+
+        RefreshTokenDatabase = RefreshTokens(
+            token = hashed_refresh_token,
+            user_id = user.id,
+            expires_at = refresh_token_expire
+        )
+        db.add(RefreshTokenDatabase)
+        
+        await db.commit()
+        await db.refresh(RefreshTokenDatabase)
+
         return {
             "access_token": access_token,
             "refresh_token": refresh_token,
             "token_type": 'bearer'}
     
     except Exception as e:
-
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f'Login error occured: {e}'
+        )
+
+# TODO написать роут обновления рефреш токена 
+@router.post('/logout', status_code=status.HTTP_202_ACCEPTED)
+async def logout(user: Users = Depends(AuthService.get_current_user), db: AsyncSession = Depends(get_db)):
+    try:
+        # Найти все активные токены пользователя
+        stmt = select(RefreshTokens).where(
+            RefreshTokens.user_id == user.id,
+            RefreshTokens.is_revoked == False
+        )
+        result = await db.execute(stmt)
+        active_tokens = result.scalars().all()
+        
+        # Отозвать все активные токены
+        current_time = datetime.utcnow()
+        for token in active_tokens:
+            token.is_revoked = True
+            token.revoked_at = current_time
+        
+        await db.commit()
+        
+        return {"message": "Log out successful"}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Log out error: {str(e)}"
         )
 
 

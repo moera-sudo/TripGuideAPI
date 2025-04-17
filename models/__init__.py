@@ -7,7 +7,7 @@ from .basemodel import BaseModel
 # from guides import Guides
 # from guidetags import GuideTags
 # from notifications import Notifications
-# from refreshtokens import RefreshTokens
+from .refreshtokens import RefreshTokens
 # from tags import Tags
 # from userrecom import UserRecom
 from .users import Users

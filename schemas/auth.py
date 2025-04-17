@@ -2,10 +2,12 @@ from pydantic import BaseModel, EmailStr, model_validator, validator,  Validatio
 from typing import Optional
 
 class TokenData(BaseModel):
-    sub: int
+    sub: str  # Или int, если используешь int ID
     nickname: Optional[str]
     email: Optional[EmailStr]
-    #TODO В будущем при добавлении админки надо будет добавить сюда is_admin и permissions
+    exp: Optional[int] = None
+    iat: Optional[int] = None
+    token_type: Optional[str] = None
 
     @model_validator(mode='after')
     def validate_subject(self):
@@ -36,7 +38,7 @@ class Tokens(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: Optional[EmailStr]
+    email: Optional[str]
     nickname: Optional[str]
     password: str
 

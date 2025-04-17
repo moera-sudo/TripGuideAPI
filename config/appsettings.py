@@ -26,8 +26,8 @@ class AppSettings(BaseSettings):
     MAIL_SERVER: str
     MAIL_FROM_NAME: str 
 
-    VERIFICATION_CODE_EXPIRE_MINUTES = int
-
+    VERIFICATION_CODE_EXPIRE_MINUTES: int = 15
+ 
     class Config:
         env_file = "../.env"
 

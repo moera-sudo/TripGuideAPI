@@ -21,3 +21,4 @@ class Users(BaseModel):
     # Count of followers
 
     # TODO Добавить сюда relationship 
+    refresh_tokens = relationship("RefreshTokens", back_populates="user", cascade="all, delete-orphan")

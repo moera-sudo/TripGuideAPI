@@ -57,6 +57,7 @@ class AuthService:
             )        
 
         to_encode = token_data.dict()
+        to_encode['sub'] = str(to_encode['sub'])
         now = datetime.utcnow()
 
 
@@ -118,6 +119,7 @@ class AuthService:
             
             token_data = TokenData(**payload)
             
+            token_data.sub = int(token_data.sub)
             return token_data
         
         except ExpiredSignatureError:
@@ -180,18 +182,23 @@ class AuthService:
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-        # * надо проверить функцию
+        # * надо проверить функцию(UPD: Вроде работает)
         try:
             token_data = AuthService.decode_jwt_token(token, "access")
             if token_data is None:
+                
                 raise credentials_exception
             
             user = await AuthService.get_user_by_id(db, token_data.sub)
             if user is None:
                 raise credentials_exception
             return user
-        except Exception:
-            raise credentials_exception
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Unexpected error: {e}",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
         
     @staticmethod
     async def authenticate_user(db: AsyncSession, user_data):
