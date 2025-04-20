@@ -36,8 +36,8 @@ class Tokens(BaseModel):
     refresh_token: str
     token_type: str
 
-class RefreshTokenRequest(BaseModel):
-    refresh_token: str
+# class RefreshTokenRequest(BaseModel):
+#     refresh_token: str
 
 class LoginRequest(BaseModel):
     email: Optional[str]

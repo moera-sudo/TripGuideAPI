@@ -10,8 +10,10 @@ import uvicorn
 from models.basemodel import BaseModel
 from config.appsettings import Settings
 from config.database import engine
+from config.config import uploads_dir
 from middlewares.LoggerMiddleware import RequestLoggingMiddleware
 from routes.auth import router as AuthRouter
+from routes.user import router as UserRouter
 
 
 @asynccontextmanager
@@ -59,9 +61,8 @@ app.add_middleware(
 )
 
 app.include_router(AuthRouter)
+app.include_router(UserRouter)
 
-uploads_dir = Path('uploads')
-uploads_dir.mkdir(exist_ok=True)
-app.mount("/uploads", StaticFiles(directory='uploads'), name='uploads')
+app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
 #* Команда для запуска uvicorn main:app --reload

@@ -1,17 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
-from typing import Annotated, Dict, Any
 from datetime import timedelta, datetime
 
 from config.appsettings import Settings
 from config.database import get_db
 from models.users import Users
 from models.refreshtokens import RefreshTokens
-from schemas.auth import RefreshTokenRequest, Token, TokenData, LoginRequest, Tokens
-from schemas.user import UserCreate, UserVerified, UserVerify
+from schemas.auth import Token, TokenData, LoginRequest, Tokens
+from schemas.user import UserCreate, UserVerify
 from services.AuthService import AuthService
 from services.EmailService import EmailService
 
@@ -19,8 +16,6 @@ router = APIRouter(
     prefix='/auth',
     tags=['authentication']
 )
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl='auth/login')
 
 @router.post('/register', status_code=status.HTTP_201_CREATED)
 async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
@@ -141,9 +136,9 @@ async def login(user_data: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post('/refresh', response_model=Tokens, status_code=status.HTTP_200_OK)
-async def refresh_token(token: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
+async def refresh_token(token: Token, db: AsyncSession = Depends(get_db)):
     try:
-        refresh_token = token.refresh_token
+        refresh_token = token.token
         # Декодируем и проверяем тип токена
         token_data = AuthService.decode_jwt_token(refresh_token, 'refresh')
 
@@ -207,7 +202,6 @@ async def refresh_token(token: RefreshTokenRequest, db: AsyncSession = Depends(g
         )
 
 
-# TODO написать роут обновления рефреш токена 
 @router.post('/logout', status_code=status.HTTP_202_ACCEPTED)
 async def logout(user: Users = Depends(AuthService.get_current_user), db: AsyncSession = Depends(get_db)):
     try:

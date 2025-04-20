@@ -17,8 +17,10 @@ class Users(BaseModel):
     age = Column(Integer)
     gender = Column(String)
     about = Column(String)
-    cof = Column(Integer) 
+    cof = Column(Integer)     
     # Count of followers
+    avatar_url = Column(String, nullable=False, default='default.jpg')
+
 
     # TODO Добавить сюда relationship 
     refresh_tokens = relationship("RefreshTokens", back_populates="user", cascade="all, delete-orphan")

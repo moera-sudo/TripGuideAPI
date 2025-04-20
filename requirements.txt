@@ -7,3 +7,4 @@ python-jose
 bcrypt
 logging
 sqlalchemy
+python-multipart

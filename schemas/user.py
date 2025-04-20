@@ -30,12 +30,12 @@ class UserVerify(BaseModel):
     class Config:
         extra = "forbid"
 
-class UserInfo(UserVerified):
+class UserInfo(BaseModel):
     username: Optional[str]
-    age: Optional[int]
+    age: Optional[str]
     gender: Optional[str]
     about: Optional[str]
-    cof: Optional[int]
+    cof: Optional[str]
     # Count of followers
     
     
