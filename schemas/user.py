@@ -31,6 +31,7 @@ class UserVerify(BaseModel):
         extra = "forbid"
 
 class UserInfo(BaseModel):
+    nickname: Optional[str]
     username: Optional[str]
     age: Optional[str]
     gender: Optional[str]

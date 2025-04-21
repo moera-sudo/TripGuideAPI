@@ -58,6 +58,7 @@ async def load_user_info(
 async def get_user_info(user: Users = Depends(AuthService.get_current_user), db: AsyncSession = Depends(get_db)):
     try: 
         return{
+            'nickname': user.nickname,
             "username": user.username,
             "age": str(user.age),
             "gender": user.gender,
@@ -70,7 +71,7 @@ async def get_user_info(user: Users = Depends(AuthService.get_current_user), db:
             detail=f"User info get error: {e}"
         )
 
-
+# Маршрут для загрузки изображения аватара пользователя
 @router.post('/upload_avatar', status_code=status.HTTP_202_ACCEPTED)
 async def upload_avatar(
     file: UploadFile = File(...), 
@@ -106,6 +107,7 @@ async def upload_avatar(
             detail=f"Avatar upload error: {str(e)}"
         )
     
+# Маршрут для получения аватарки по нику 
 @router.get('/avatar/{nickname}', response_class=FileResponse)
 async def get_avatar(nickname: str, db: AsyncSession = Depends(get_db)):
     try:
@@ -137,7 +139,7 @@ async def get_avatar(nickname: str, db: AsyncSession = Depends(get_db)):
             detail=f"Error retrieving avatar: {str(e)}"
         )
 
-
+#Маршрут для получения аватарки по токену
 @router.get('/my_avatar', response_class=FileResponse)
 async def get_my_avatar(user: Users = Depends(AuthService.get_current_user)):
     try:
