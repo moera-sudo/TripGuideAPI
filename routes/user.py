@@ -161,5 +161,27 @@ async def get_my_avatar(user: Users = Depends(AuthService.get_current_user)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving avatar: {str(e)}"
         )
+    
+@router.delete('/delete_avatar', status_code=status.HTTP_202_ACCEPTED)
+async def delete_avatar(user: Users = Depends(AuthService.get_current_user), db: AsyncSession = Depends(get_db)):
+    try:
+        if user.avatar_url != 'default.jpg':
+            user.avatar_url = 'default.jpg'
+            await db.commit()
+
+            avatar_path = uploads_dir / user.avatar_url
+            os.remove(avatar_path)
+
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail='User do not have avatar'
+            )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f'Avatar deleting error: {e}'
+        )
 
 #TODO Тут надо написать роут удаления аккаунта(когда нибудь)
