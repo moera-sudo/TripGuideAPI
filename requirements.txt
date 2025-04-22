@@ -8,3 +8,4 @@ bcrypt
 logging
 sqlalchemy
 python-multipart
+httpx

@@ -10,11 +10,11 @@ import uvicorn
 from models.basemodel import BaseModel
 from config.appsettings import Settings
 from config.database import engine
-from config.config import uploads_dir
+from config.config import uploads_dir, content_dir
 from middlewares.LoggerMiddleware import RequestLoggingMiddleware
 from routes.auth import router as AuthRouter
 from routes.user import router as UserRouter
-
+from routes.guides import router as GuideRouter
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -62,7 +62,10 @@ app.add_middleware(
 
 app.include_router(AuthRouter)
 app.include_router(UserRouter)
+app.include_router(GuideRouter)
 
 app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
+
+app.mount("/content", StaticFiles(directory=content_dir), name="content")
 
 #* Команда для запуска uvicorn main:app --reload

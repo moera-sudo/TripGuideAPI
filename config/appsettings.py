@@ -28,6 +28,8 @@ class AppSettings(BaseSettings):
 
     VERIFICATION_CODE_EXPIRE_MINUTES: int = 15
  
+    CATBOX_USERHASH: str = '14f072556bee81c3367d8d027'
+
     class Config:
         env_file = "../.env"
 

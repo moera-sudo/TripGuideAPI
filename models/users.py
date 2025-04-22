@@ -24,6 +24,6 @@ class Users(BaseModel):
 
     # TODO Добавить сюда relationship 
     refresh_tokens = relationship("RefreshTokens", back_populates="user", cascade="all, delete-orphan")
-    guides = relationship("Guide", back_populates="author", cascade="all, delete-orphan")
+    guides = relationship("Guides", back_populates="author", cascade="all, delete-orphan")
     # guide_likes = relationship("GuideLike", back_populates="user", cascade="all, delete-orphan", lazy='dynamic')
 

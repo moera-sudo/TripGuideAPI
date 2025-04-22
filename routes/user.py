@@ -129,7 +129,14 @@ async def get_avatar(nickname: str, db: AsyncSession = Depends(get_db)):
                 detail="Avatar file not found"
             )
 
-        return FileResponse(avatar_path)
+        headers = {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0"
+        }
+    
+        return FileResponse(avatar_path, headers=headers)
+
 
     except HTTPException:
         raise
@@ -166,11 +173,10 @@ async def get_my_avatar(user: Users = Depends(AuthService.get_current_user)):
 async def delete_avatar(user: Users = Depends(AuthService.get_current_user), db: AsyncSession = Depends(get_db)):
     try:
         if user.avatar_url != 'default.jpg':
-            user.avatar_url = 'default.jpg'
-            await db.commit()
-
             avatar_path = uploads_dir / user.avatar_url
             os.remove(avatar_path)
+            user.avatar_url = 'default.jpg'
+            await db.commit()
 
         else:
             raise HTTPException(
