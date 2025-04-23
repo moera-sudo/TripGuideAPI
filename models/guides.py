@@ -21,5 +21,6 @@ class Guides(BaseModel):
     author = relationship("Users", back_populates="guides")
 
     # guide_tags = relationship("GuideTag", back_populates="guide", cascade="all, delete-orphan")
-    # tags = relationship("Tag", secondary="guide_tag", back_populates="guides", viewonly=True)
+    tags = relationship("Tags", secondary="guide_tags", back_populates="guides")
+
 

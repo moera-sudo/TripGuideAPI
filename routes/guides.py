@@ -1,4 +1,5 @@
 import shutil
+from typing import List
 import httpx
 import aiofiles
 from datetime import datetime
@@ -14,6 +15,8 @@ from config.database import get_db
 from config.config import uploads_dir, content_dir
 from models.users import Users
 from models.guides import Guides
+from models.tags import Tags
+from models.guidetags import GuideTags
 from schemas.user import UserInfo
 from services.AuthService import AuthService
 
@@ -33,7 +36,7 @@ async def upload_guide_image(file : UploadFile = File(...)):
         files = {
             "fileToUpload": (file.filename, await file.read(), file.content_type)
         }
-        
+
         data = {
             "reqtype": "fileupload",
             "userhash": Settings.CATBOX_USERHASH
@@ -94,6 +97,7 @@ async def save_guide(
     description: str = Form(...),
     markdown_text: str = Form(...),
     logo: UploadFile = File(...),
+    tags: List[str] = Form(...),
     db: AsyncSession = Depends(get_db),
     user: Users = Depends(AuthService.get_current_user),
 ):
@@ -124,7 +128,26 @@ async def save_guide(
             author_id=user.id
         )
         db.add(guide)
+        await db.flush()
+
+        tag_objects = []
+        for tag_name in tags:
+            tag_name = tag_name.strip().lower()
+            tag_query = await db.execute(select(Tags).where(Tags.name == tag_name))
+            tag = tag_query.scalar_one_or_none()
+            if not tag:
+                tag = Tags(name=tag_name)
+                db.add(tag)
+                await db.flush()
+            tag_objects.append(tag)
+
+        # Создание связей в guide_tags
+        for tag in tag_objects:
+            link = GuideTags(guide_id=guide.id, tag_id=tag.id)
+            db.add(link)
+
         await db.commit()
+
 
         return {"message": "Guide saved successfully"}
 
@@ -169,4 +192,4 @@ async def read_guide(guide_id: int, db: AsyncSession = Depends(get_db)):
 
 
 
-#TODO сука надо эту хуйню доделать+странички(хотя бы каталог)+теги+реки. я не ебу как я вам теги сделаю, потому что там ебли с реактом даже больше будет
+#TODO надо потестить теги, мб че то добавить -> сделать рексервис и выгрузку на странички. 
