@@ -22,5 +22,7 @@ class Guides(BaseModel):
 
     # guide_tags = relationship("GuideTag", back_populates="guide", cascade="all, delete-orphan")
     tags = relationship("Tags", secondary="guide_tags", back_populates="guides")
+    liked_by = relationship("Users", secondary="guide_likes", back_populates="guide_likes")
+
 
 

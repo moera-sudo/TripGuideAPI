@@ -12,12 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.appsettings import Settings
 from config.database import get_db
-from config.config import uploads_dir, content_dir
+from config.config import content_dir
 from models.users import Users
 from models.guides import Guides
 from models.tags import Tags
+from models.guideslikes import GuideLikes
 from models.guidetags import GuideTags
-from schemas.user import UserInfo
 from services.AuthService import AuthService
 
 router = APIRouter(
@@ -107,19 +107,16 @@ async def save_guide(
         guide_path = content_dir / guide_folder_name
         guide_path.mkdir(parents=True, exist_ok=True)
 
-        # Save markdown text to file
         md_filename = "guide.md"
         md_path = guide_path / md_filename
         async with aiofiles.open(md_path, "w", encoding="utf-8") as f:
             await f.write(markdown_text)
 
-        # Save logo
         logo_filename = f"logo_{logo.filename}"
         logo_path = guide_path / logo_filename
         with open(logo_path, "wb") as out_logo:
             shutil.copyfileobj(logo.file, out_logo)
 
-        # Save to DB
         guide = Guides(
             title=title,
             description=description,
@@ -158,7 +155,7 @@ async def save_guide(
         )
     
 @router.get("/read_guide/{guide_id}", status_code=status.HTTP_200_OK)
-async def read_guide(guide_id: int, db: AsyncSession = Depends(get_db)):
+async def read_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: AsyncSession = Depends(AuthService.get_current_user)):
 
     result = await db.execute(
         select(Guides).where(Guides.id == guide_id).options(selectinload(Guides.author))
@@ -173,12 +170,26 @@ async def read_guide(guide_id: int, db: AsyncSession = Depends(get_db)):
         async with aiofiles.open(md_path, mode="r", encoding="utf-8") as f:
             markdown_text = await f.read()
 
+        is_liked = False
+
+        if user:
+            result = await db.execute(
+                select(GuideLikes).where(
+                    GuideLikes.user_id == user.id,
+                    GuideLikes.guide_id == guide.id
+                )
+            )
+            is_liked = result.scalar_one_or_none() is not None
+
+
         return {
             "title": guide.title,
             "description": guide.description,
             "logo_url": f"http://127.0.0.1:8000/guide/get_guide_logo/{guide.id}",
             "markdown_text": markdown_text,
             "author": guide.author.nickname,
+            "liked_by_user": is_liked,
+            "tags": [tag.name for tag in guide.tags],
             "author_avatar": f"http://127.0.0.1:8000/user/avatar/{guide.author.nickname}", 
             # ! Эта штука тестовая, я хз сработает ли
             "created_at": guide.created_at
@@ -190,6 +201,38 @@ async def read_guide(guide_id: int, db: AsyncSession = Depends(get_db)):
             detail=f"Error reading guide file: {e}"
         )
 
+@router.post("/guides/{guide_id}/like", status_code=status.HTTP_200_OK)
+async def like_guide(
+    guide_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: Users = Depends(AuthService.get_current_user)
+):
+    result = await db.execute(
+        select(GuideLikes).where(
+            GuideLikes.user_id == user.id,
+            GuideLikes.guide_id == guide_id
+        )
+    )
+    existing = result.scalar_one_or_none()
+
+    if existing:
+        # Убираем лайк
+        await db.delete(existing)
+        await db.commit()
+        return {"liked": False}
+
+    # Добавляем лайк
+    like = GuideLikes(user_id=user.id, guide_id=guide_id)
+    db.add(like)
+
+    # Увеличиваем счетчик лайков
+    result = await db.execute(select(Guides).where(Guides.id == guide_id))
+    guide = result.scalar_one_or_none()
+    if guide:
+        guide.like_count += 1
+
+    await db.commit()
+    return {"liked": True}
 
 
 #TODO надо потестить теги, мб че то добавить -> сделать рексервис и выгрузку на странички. 

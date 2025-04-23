@@ -15,6 +15,7 @@ from middlewares.LoggerMiddleware import RequestLoggingMiddleware
 from routes.auth import router as AuthRouter
 from routes.user import router as UserRouter
 from routes.guides import router as GuideRouter
+from routes.pages import router as PageRouter
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -63,6 +64,7 @@ app.add_middleware(
 app.include_router(AuthRouter)
 app.include_router(UserRouter)
 app.include_router(GuideRouter)
+app.include_router(PageRouter)
 
 app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
