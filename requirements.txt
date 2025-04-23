@@ -9,3 +9,4 @@ logging
 sqlalchemy
 python-multipart
 httpx
+aiofiles
