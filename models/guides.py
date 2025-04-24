@@ -18,11 +18,11 @@ class Guides(BaseModel):
     head_image_url = Column(String, nullable=False)
 
     author_id = Column(Integer, ForeignKey('users.id'))
-    author = relationship("Users", back_populates="guides")
+    author = relationship("Users", back_populates="guides", lazy="selectin")
 
     # guide_tags = relationship("GuideTag", back_populates="guide", cascade="all, delete-orphan")
-    tags = relationship("Tags", secondary="guide_tags", back_populates="guides")
-    liked_by = relationship("Users", secondary="guide_likes", back_populates="guide_likes")
+    tags = relationship("Tags", secondary="guide_tags", back_populates="guides", lazy="selectin")
+    liked_by = relationship("Users", secondary="guide_likes", back_populates="guide_likes", lazy="selectin")
 
 
 

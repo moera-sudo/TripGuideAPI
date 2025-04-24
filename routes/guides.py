@@ -157,10 +157,10 @@ async def save_guide(
         )
     
 @router.get("/read_guide/{guide_id}", status_code=status.HTTP_200_OK)
-async def read_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: AsyncSession = Depends(AuthService.get_current_user)):
+async def read_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Users = Depends(AuthService.get_current_user)):
 
     result = await db.execute(
-        select(Guides).where(Guides.id == guide_id).options(selectinload(Guides.author))
+        select(Guides).where(Guides.id == guide_id).options(selectinload(Guides.author), selectinload(Guides.tags))
     )
     guide = result.scalar_one_or_none()
 
@@ -201,38 +201,75 @@ async def read_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: As
             detail=f"Error reading guide file: {e}"
         )
 
-@router.post("/guides/{guide_id}/like", status_code=status.HTTP_200_OK)
-async def like_guide(
-    guide_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: Users = Depends(AuthService.get_current_user)
-):
-    result = await db.execute(
-        select(GuideLikes).where(
-            GuideLikes.user_id == user.id,
-            GuideLikes.guide_id == guide_id
+# @router.post("/guides/{guide_id}/like", status_code=status.HTTP_200_OK)
+# async def like_guide(
+#     guide_id: int,
+#     db: AsyncSession = Depends(get_db),
+#     user: Users = Depends(AuthService.get_current_user)
+# ):
+#     result = await db.execute(
+#         select(GuideLikes).where(
+#             GuideLikes.user_id == user.id,
+#             GuideLikes.guide_id == guide_id
+#         )
+#     )
+#     existing = result.scalar_one_or_none()
+
+#     if existing:
+#         # Убираем лайк
+#         await db.delete(existing)
+#         await db.commit()
+#         return {"liked": False}
+
+#     # Добавляем лайк
+#     like = GuideLikes(user_id=user.id, guide_id=guide_id)
+#     db.add(like)
+
+#     # Увеличиваем счетчик лайков
+#     result = await db.execute(select(Guides).where(Guides.id == guide_id))
+#     guide = result.scalar_one_or_none()
+#     if guide:
+#         guide.like_count += 1
+
+#     await db.commit()
+#     return {"liked": True}
+
+@router.post('/like/{guide_id}', status_code=status.HTTP_202_ACCEPTED)
+async def like_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Users = Depends(AuthService.get_current_user)):
+    try:
+        result = await db.execute(
+            select(GuideLikes).where(GuideLikes.user_id == user.id, GuideLikes.guide_id == guide_id)
         )
-    )
-    existing = result.scalar_one_or_none()
+        existing = result.scalar_one_or_none()
+        guide_response = await db.execute(select(Guides).where(Guides.id == guide_id))
+        guide = guide_response.scalar_one_or_none()
+        
+        if guide:
+            if existing:
+                guide.like_count=-1
+                await db.delete(existing)
+                await db.commit()
+                return {"liked": False}
+            else:
+                like = GuideLikes(user_id=user.id, guide_id=guide.id)
+                db.add(like)
+                guide.like_count=+1
+                await db.commit()
+                return {"liked": True}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Guide not found"
+            )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Server error when trying to like: {e}"
+        )
 
-    if existing:
-        # Убираем лайк
-        await db.delete(existing)
-        await db.commit()
-        return {"liked": False}
+            
 
-    # Добавляем лайк
-    like = GuideLikes(user_id=user.id, guide_id=guide_id)
-    db.add(like)
 
-    # Увеличиваем счетчик лайков
-    result = await db.execute(select(Guides).where(Guides.id == guide_id))
-    guide = result.scalar_one_or_none()
-    if guide:
-        guide.like_count += 1
-
-    await db.commit()
-    return {"liked": True}
 
 
 #TODO надо потестить теги, мб че то добавить -> сделать рексервис и выгрузку на странички. 

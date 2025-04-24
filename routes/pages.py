@@ -30,21 +30,32 @@ router = APIRouter(
 
 @router.get('/catalog', status_code=status.HTTP_200_OK)
 async def get_catalog(db: AsyncSession = Depends(get_db)):
+    
     result = await db.execute(
-        select(Guides.id, Guides.title, Guides.head_image_url, Guides.description, Users.username)
-        .join(Users, Guides.author_id == Users.id)
+        select(Guides)
+        .options(
+            selectinload(Guides.tags),
+        )
         .order_by(Guides.created_at.desc())
     )
-    guides = result.all()
+    guides = result.scalars().all()
 
-    return [
-        {
-            "id": guide.id,
-            "title": guide.title,
-            "description": guide.description,
-        }
-        for guide in guides
-    ]
+    # Получаем все уникальные теги
+    tags_result = await db.execute(select(Tags.name).distinct())
+    all_tags = [row.name for row in tags_result.fetchall()]
+
+    return {
+        "guides": [
+            {
+                "id": guide.id,
+                "title": guide.title,
+                "description": guide.description,
+                "tags": [tag.name for tag in guide.tags]
+            }
+            for guide in guides
+        ],
+        "tags": all_tags
+    }
 
 # @router.get('/recommendations', status_code=status.HTTP_200_OK)
 # async def get_recs(db: AsyncSession = Depends(get_db), user: AsyncSession = Depends(AuthService.get_current_user)):

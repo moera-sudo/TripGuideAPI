@@ -10,4 +10,4 @@ class Tags(BaseModel):
     id = Column(Integer, primary_key=True)
     name = Column(String, unique=True, nullable=False)
 
-    guides = relationship("Guides", secondary="guide_tags", back_populates="tags")
+    guides = relationship("Guides", secondary="guide_tags", back_populates="tags", lazy="selectin")
