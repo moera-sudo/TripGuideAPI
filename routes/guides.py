@@ -53,6 +53,8 @@ async def upload_guide_image(file : UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Catbox upload failed: {e}")
     
+
+    # http://localhost/guide/get_guide_logo/{id}
 @router.get('/get_guide_logo/{guide_id}', response_class=FileResponse,  status_code=status.HTTP_200_OK)
 async def get_guide_logo(guide_id: int, db: AsyncSession = Depends(get_db)):
     try:
@@ -189,6 +191,7 @@ async def read_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: As
             "markdown_text": markdown_text,
             "author": guide.author.nickname,
             "liked_by_user": is_liked,
+            "likes_count": guide.like_count,
             "tags": [tag.name for tag in guide.tags],
             "author_avatar": f"http://127.0.0.1:8000/user/avatar/{guide.author.nickname}", 
             # ! Эта штука тестовая, я хз сработает ли

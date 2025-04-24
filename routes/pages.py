@@ -19,7 +19,7 @@ from models.tags import Tags
 from models.guidetags import GuideTags
 from schemas.user import UserInfo
 from services.AuthService import AuthService
-
+# from services.RecommendationService import RecommendationService
 
 router = APIRouter(
     tags=['pages']
@@ -46,3 +46,15 @@ async def get_catalog(db: AsyncSession = Depends(get_db)):
         }
         for guide in guides
     ]
+
+# @router.get('/recommendations', status_code=status.HTTP_200_OK)
+# async def get_recs(db: AsyncSession = Depends(get_db), user: AsyncSession = Depends(AuthService.get_current_user)):
+
+
+
+
+"""
+Я короче хз как тут щас делать. Надо щас сделать какое то подобие рекомендаций
+я хз правильно ли работают лайки но щас их особо не потестишь soooo я пока вслепую напишу....
+"""
+
