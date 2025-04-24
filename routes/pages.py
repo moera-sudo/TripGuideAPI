@@ -42,7 +42,6 @@ async def get_catalog(db: AsyncSession = Depends(get_db)):
             "id": guide.id,
             "title": guide.title,
             "description": guide.description,
-            "logo": guide.head_image_url #! Убрать либо вставить фулл ссылку
         }
         for guide in guides
     ]

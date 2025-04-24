@@ -187,14 +187,11 @@ async def read_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: As
         return {
             "title": guide.title,
             "description": guide.description,
-            "logo_url": f"http://127.0.0.1:8000/guide/get_guide_logo/{guide.id}",
             "markdown_text": markdown_text,
             "author": guide.author.nickname,
             "liked_by_user": is_liked,
             "likes_count": guide.like_count,
             "tags": [tag.name for tag in guide.tags],
-            "author_avatar": f"http://127.0.0.1:8000/user/avatar/{guide.author.nickname}", 
-            # ! Эта штука тестовая, я хз сработает ли
             "created_at": guide.created_at
         }
 
