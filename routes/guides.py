@@ -131,7 +131,7 @@ async def save_guide(
 
         tag_objects = []
         for tag_name in tags:
-            tag_name = tag_name.strip().lower()
+            tag_name = tag_name.strip()
             tag_query = await db.execute(select(Tags).where(Tags.name == tag_name))
             tag = tag_query.scalar_one_or_none()
             if not tag:
@@ -246,14 +246,14 @@ async def like_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Us
         
         if guide:
             if existing:
-                guide.like_count=-1
+                guide.like_count-= 1
                 await db.delete(existing)
                 await db.commit()
                 return {"liked": False}
             else:
                 like = GuideLikes(user_id=user.id, guide_id=guide.id)
                 db.add(like)
-                guide.like_count=+1
+                guide.like_count+= 1
                 await db.commit()
                 return {"liked": True}
         else:
