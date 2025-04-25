@@ -10,3 +10,6 @@ sqlalchemy
 python-multipart
 httpx
 aiofiles
+scikit-learn
+chromadb
+sentence_transformers

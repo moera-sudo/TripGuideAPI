@@ -86,7 +86,7 @@ async def get_popular(db: AsyncSession = Depends(get_db)):
 
 @router.get('/profile', status_code=status.HTTP_200_OK)
 async def get_profile(db: AsyncSession = Depends(get_db), user: Users = Depends(AuthService.get_current_user)):
-    result = await db.sxecute(
+    result = await db.execute(
         select(Guides).where(Guides.author_id == user.id).options(selectinload(Guides.tags)).order_by(Guides.created_at.desc())
     )
     guides = result.scalars().all()
@@ -127,11 +127,9 @@ async def get_profile(db: AsyncSession = Depends(get_db), user: Users = Depends(
     }
 
 # ! надо потестить йоу
-# @router.get('/recommendations', status_code=status.HTTP_200_OK)
-# async def get_recs(db: AsyncSession = Depends(get_db), user: AsyncSession = Depends(AuthService.get_current_user)):
-
-
-# guides/
+# @router.get("/recommendation", status_code=status.HTTP_200_OK)
+# async def get_recs(db: AsyncSession = Depends(get_db), user: Users = Depends(AuthService.get_current_user)):
+#     guides = 
 
 """
 Я короче хз как тут щас делать. Надо щас сделать какое то подобие рекомендаций

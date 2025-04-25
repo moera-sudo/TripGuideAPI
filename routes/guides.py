@@ -229,12 +229,12 @@ async def delete_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: 
             delete(GuideTags).where(GuideTags.guide_id == guide_id)
         )
         
-        content_path = guide.content_file_url
+        content_path = os.path.dirname(guide.content_file_url)
 
         if os.path.exists(content_path):
             shutil.rmtree(content_path)
 
-        await db.execute(delete(guide))
+        await db.delete(guide)
 
         await db.execute(
             delete(Tags).where(
@@ -333,8 +333,18 @@ async def like_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Us
         )
 
             
+@router.get("/tags", status_code=status.HTTP_200_OK)
+async def get_tags(db: AsyncSession = Depends(get_db)):
+    try:
+        tags_result = await db.execute(select(Tags.name).distinct())
+        all_tags = [row.name for row in tags_result.fetchall()]
 
-
+        return {"tags": all_tags}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error while extraction tags: {e}"
+        )
 
 
 #TODO надо потестить теги, мб че то добавить -> сделать рексервис и выгрузку на странички. 
