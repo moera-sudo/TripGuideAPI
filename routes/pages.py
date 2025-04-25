@@ -128,21 +128,32 @@ async def get_profile(db: AsyncSession = Depends(get_db), user: Users = Depends(
 
 # ! надо потестить йоу
 @router.get("/recs", status_code=status.HTTP_200_OK)
-async def get_recs(limit: int = 20, db: AsyncSession = Depends(get_db), user: Users = Depends(AuthService.get_current_user)):
+async def get_recs(
+    limit: int = 20, 
+    db: AsyncSession = Depends(get_db), 
+    user: Users = Depends(AuthService.get_current_user)
+):
     try:
-        guides = RecommendationService.get_recommendations_by_user_likes(
+        # Получаем список ID рекомендуемых путеводителей
+        guide_ids = await RecommendationService.get_recommendations_by_user_likes(
             db=db,
             user_id=user.id,
             limit=limit
         )
-        if not guides:
+        
+        if not guide_ids:
             return {"recommendations": []}
         
-        stmt = select(Guides).where(Guides.id.in_(guides))
+        # Получаем полную информацию о путеводителях
+        stmt = select(Guides).where(Guides.id.in_(guide_ids)).options(selectinload(Guides.tags))
         result = await db.execute(stmt)
         guides = result.scalars().all()
         
-        sorted_guides = sorted(guides, key=lambda g: guides.index(g.id))
+        if not guides:
+            return {"recommendations": []}
+        
+        # Сортируем в том же порядке, что и полученные ID
+        sorted_guides = sorted(guides, key=lambda g: guide_ids.index(g.id))
         
         # Форматируем результат
         recommendations = []
@@ -151,11 +162,11 @@ async def get_recs(limit: int = 20, db: AsyncSession = Depends(get_db), user: Us
                 "id": guide.id,
                 "title": guide.title,
                 "description": guide.description,
-                "tags": [tag.name for tag in guide.tags]
+                "tags": [tag.name for tag in guide.tags] if guide.tags else []
             })
-
+        
         return {"recommendations": recommendations}
-
+    
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
