@@ -87,7 +87,7 @@ async def get_popular(db: AsyncSession = Depends(get_db)):
 @router.get('/profile', status_code=status.HTTP_200_OK)
 async def get_profile(db: AsyncSession = Depends(get_db), user: Users = Depends(AuthService.get_current_user)):
     result = await db.sxecute(
-        select(Guides).where(Guides.author_id == user.id).order_by(Guides.created_at.desc())
+        select(Guides).where(Guides.author_id == user.id).options(selectinload(Guides.tags)).order_by(Guides.created_at.desc())
     )
     guides = result.scalars().all()
 
@@ -95,6 +95,8 @@ async def get_profile(db: AsyncSession = Depends(get_db), user: Users = Depends(
         select(Guides)
         .join(GuideLikes, GuideLikes.guide_id == Guides.id)
         .where(GuideLikes.user_id == user.id)
+        .options(selectinload(Guides.tags))
+
     )
     liked_guides = result.scalars().all()
 
@@ -105,7 +107,9 @@ async def get_profile(db: AsyncSession = Depends(get_db), user: Users = Depends(
                 "id": guide.id,
                 "title": guide.title,
                 "description": guide.description,
-                "created_at": guide.created_at
+                "created_at": guide.created_at,
+                "tags": [tag.name for tag in guide.tags]
+
             }
             for guide in guides   
         ],
@@ -114,13 +118,15 @@ async def get_profile(db: AsyncSession = Depends(get_db), user: Users = Depends(
                 "id": guide.id,
                 "title": guide.title,
                 "description": guide.description,
-                "created_at": guide.created_at
+                "created_at": guide.created_at,
+                "tags": [tag.name for tag in guide.tags]
+
             }
             for guide in liked_guides
         ]
     }
 
-
+# ! надо потестить йоу
 # @router.get('/recommendations', status_code=status.HTTP_200_OK)
 # async def get_recs(db: AsyncSession = Depends(get_db), user: AsyncSession = Depends(AuthService.get_current_user)):
 

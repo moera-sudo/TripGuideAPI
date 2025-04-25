@@ -1,3 +1,4 @@
+import os
 import shutil
 from typing import List
 import httpx
@@ -6,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, status, UploadFile, File
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import delete, exists, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -156,6 +157,102 @@ async def save_guide(
             detail=f"Error while saving guide: {e}"
         )
     
+@router.put('/edit/{guide_id}', status_code=status.HTTP_202_ACCEPTED)
+async def edit_guide(
+    guide_id: int,
+    title: str = Form(...),
+    description: str = Form(...),
+    markdown_text: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+    user: Users = Depends(AuthService.get_current_user)):
+    
+    try:
+        result = await db.execute(
+            select(Guides).where(Guides.id == guide_id, Guides.author_id == user.id)
+        )
+
+        if not result:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail='Editing guide not found or not owned by user'
+            )
+        
+        guide = result.scalar_one_or_none()
+        
+        if markdown_text is not None:
+            try:
+                with open(guide.content_file_url, 'w', encoding='utf-8') as md_file:
+                    md_file.write(markdown_text)
+            
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f'Failed to update guide: {e}'
+                )
+            
+        if title:
+            guide.title = title
+        if description:
+            guide.description = description
+
+
+        await db.commit()
+        await db.refresh(guide)
+
+        return {"message": "Guide updated successfully"}
+            
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error while editing guide: {e}"
+        )
+            
+@router.delete("/delete/{guide_id}", status_code=status.HTTP_202_ACCEPTED)
+async def delete_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Users = Depends(AuthService.get_current_user)):
+    try:
+        result = await db.execute(
+            select(Guides).where(Guides.id == guide_id, Guides.author_id == user.id).options(selectinload(Guides.tags))
+        )
+        guide = result.scalar_one_or_none()
+
+        if not guide:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail='Deleting guide not found or not owned by user'
+            )
+        
+        await db.execute(
+            delete(GuideLikes).where(GuideLikes.guide_id == guide_id)
+        )
+        await db.execute(
+            delete(GuideTags).where(GuideTags.guide_id == guide_id)
+        )
+        
+        content_path = guide.content_file_url
+
+        if os.path.exists(content_path):
+            shutil.rmtree(content_path)
+
+        await db.execute(delete(guide))
+
+        await db.execute(
+            delete(Tags).where(
+                ~exists().where(GuideTags.tag_id == Tags.id)
+            )
+        ) 
+
+        await db.commit()
+
+        return{"message": "Guide deleted successfully"} 
+
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f'Error while deleting guide: {e}'
+        )  
+
 @router.get("/read_guide/{guide_id}", status_code=status.HTTP_200_OK)
 async def read_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Users = Depends(AuthService.get_current_user)):
 
@@ -201,38 +298,6 @@ async def read_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Us
             detail=f"Error reading guide file: {e}"
         )
 
-# @router.post("/guides/{guide_id}/like", status_code=status.HTTP_200_OK)
-# async def like_guide(
-#     guide_id: int,
-#     db: AsyncSession = Depends(get_db),
-#     user: Users = Depends(AuthService.get_current_user)
-# ):
-#     result = await db.execute(
-#         select(GuideLikes).where(
-#             GuideLikes.user_id == user.id,
-#             GuideLikes.guide_id == guide_id
-#         )
-#     )
-#     existing = result.scalar_one_or_none()
-
-#     if existing:
-#         # Убираем лайк
-#         await db.delete(existing)
-#         await db.commit()
-#         return {"liked": False}
-
-#     # Добавляем лайк
-#     like = GuideLikes(user_id=user.id, guide_id=guide_id)
-#     db.add(like)
-
-#     # Увеличиваем счетчик лайков
-#     result = await db.execute(select(Guides).where(Guides.id == guide_id))
-#     guide = result.scalar_one_or_none()
-#     if guide:
-#         guide.like_count += 1
-
-#     await db.commit()
-#     return {"liked": True}
 
 @router.post('/like/{guide_id}', status_code=status.HTTP_202_ACCEPTED)
 async def like_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Users = Depends(AuthService.get_current_user)):
