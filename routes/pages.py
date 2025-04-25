@@ -151,8 +151,7 @@ async def get_recs(limit: int = 20, db: AsyncSession = Depends(get_db), user: Us
                 "id": guide.id,
                 "title": guide.title,
                 "description": guide.description,
-                "created_at": guide.created_at,
-                "tags": [{"id": tag.id, "name": tag.name} for tag in guide.tags]
+                "guide_tags": [{"id": tag.id, "name": tag.name} for tag in guide.tags]
             })
 
         return {"recommendations": recommendations}
