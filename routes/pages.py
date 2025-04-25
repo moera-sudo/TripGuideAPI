@@ -20,7 +20,7 @@ from models.tags import Tags
 from models.guidetags import GuideTags
 from schemas.user import UserInfo
 from services.AuthService import AuthService
-# from services.RecommendationService import RecommendationService
+from services.RecommendationService import RecommendationService
 
 router = APIRouter(
     tags=['pages']
@@ -127,9 +127,44 @@ async def get_profile(db: AsyncSession = Depends(get_db), user: Users = Depends(
     }
 
 # ! надо потестить йоу
-# @router.get("/recommendation", status_code=status.HTTP_200_OK)
-# async def get_recs(db: AsyncSession = Depends(get_db), user: Users = Depends(AuthService.get_current_user)):
-#     guides = 
+@router.get("/recs", status_code=status.HTTP_200_OK)
+async def get_recs(limit: int = 20, db: AsyncSession = Depends(get_db), user: Users = Depends(AuthService.get_current_user)):
+    try:
+        guides = RecommendationService.get_recommendations_by_user_likes(
+            db=db,
+            user_id=user.id,
+            limit=limit
+        )
+        if not guides:
+            return {"recommendations": []}
+        
+        stmt = select(Guides).where(Guides.id.in_(guides))
+        result = await db.execute(stmt)
+        guides = result.scalars().all()
+        
+        sorted_guides = sorted(guides, key=lambda g: guides.index(g.id))
+        
+        # Форматируем результат
+        recommendations = []
+        for guide in sorted_guides:
+            recommendations.append({
+                "id": guide.id,
+                "title": guide.title,
+                "description": guide.description,
+                "created_at": guide.created_at,
+                "tags": [{"id": tag.id, "name": tag.name} for tag in guide.tags]
+            })
+
+        return {"recommendations": recommendations}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error while getting recommendations: {e}"
+        )
+
+
+
 
 """
 Я короче хз как тут щас делать. Надо щас сделать какое то подобие рекомендаций
