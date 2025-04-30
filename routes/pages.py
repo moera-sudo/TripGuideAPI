@@ -1,25 +1,15 @@
-import shutil
-from typing import List
-import httpx
-import aiofiles
-from datetime import datetime
-from pathlib import Path
-from fastapi import APIRouter, Depends, Form, HTTPException, status, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config.appsettings import Settings
 from config.database import get_db
-from config.config import uploads_dir, content_dir
 from models.guideslikes import GuideLikes
 from models.users import Users
 from models.guides import Guides
 from models.tags import Tags
-from models.guidetags import GuideTags
-from schemas.user import UserInfo
-from services.AuthService import AuthService
+from utils.current_user import get_current_user
+from utils.recommendation_service import get_recommendation_service
 from services.RecommendationService import RecommendationService
 
 router = APIRouter(
@@ -31,111 +21,135 @@ router = APIRouter(
 
 @router.get('/catalog', status_code=status.HTTP_200_OK)
 async def get_catalog(db: AsyncSession = Depends(get_db)):
-    
-    result = await db.execute(
-        select(Guides)
-        .options(
-            selectinload(Guides.tags),
+    try:
+        result = await db.execute(
+            select(Guides)
+            .options(
+                selectinload(Guides.tags),
+            )
+            .order_by(Guides.created_at.desc())
         )
-        .order_by(Guides.created_at.desc())
-    )
-    guides = result.scalars().all()
+        guides = result.scalars().all()
 
-    # Получаем все уникальные теги
-    tags_result = await db.execute(select(Tags.name).distinct())
-    all_tags = [row.name for row in tags_result.fetchall()]
+        # Получаем все уникальные теги
+        tags_result = await db.execute(select(Tags.name).distinct())
+        all_tags = [row.name for row in tags_result.fetchall()]
 
-    return {
-        "guides": [
-            {
-                "id": guide.id,
-                "title": guide.title,
-                "description": guide.description,
-                "guide_tags": [tag.name for tag in guide.tags]
-            }
-            for guide in guides
-        ],
-        "tags": all_tags
-    }
+        return {
+            "guides": [
+                {
+                    "id": guide.id,
+                    "title": guide.title,
+                    "description": guide.description,
+                    "guide_tags": [tag.name for tag in guide.tags]
+                }
+                for guide in guides
+            ],
+            "tags": all_tags
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting catalog: {e}"
+        )
 
 @router.get('/popular', status_code=status.HTTP_200_OK)
 async def get_popular(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Guides)
-        .options(
-            selectinload(Guides.tags)
-        )
-        .order_by(Guides.like_count.desc()).limit(3)
-    )
-    guides = result.scalars().all()
+    try:
 
-    # id, title, description, author, created_at
-    return {
-        "guides": [
-            {
-                "id": guide.id,
-                "title": guide.title,
-                "description" : guide.description,
-                "author": guide.author.nickname,
-                "created_at": guide.created_at,
-                "guide_tags": [tag.name for tag in guide.tags]
-            }
-            for guide in guides
-        ]
-    } 
+        result = await db.execute(
+            select(Guides)
+            .options(
+                selectinload(Guides.tags)
+            )
+            .order_by(Guides.like_count.desc()).limit(3)
+        )
+        guides = result.scalars().all()
+
+        return {
+            "guides": [
+                {
+                    "id": guide.id,
+                    "title": guide.title,
+                    "description" : guide.description,
+                    "author": guide.author.nickname,
+                    "created_at": guide.created_at,
+                    "guide_tags": [tag.name for tag in guide.tags]
+                }
+                for guide in guides
+            ]
+        } 
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting popular: {e}"
+        )
 
 @router.get('/profile', status_code=status.HTTP_200_OK)
-async def get_profile(db: AsyncSession = Depends(get_db), user: Users = Depends(AuthService.get_current_user)):
-    result = await db.execute(
-        select(Guides).where(Guides.author_id == user.id).options(selectinload(Guides.tags)).order_by(Guides.created_at.desc())
-    )
-    guides = result.scalars().all()
+async def get_profile(db: AsyncSession = Depends(get_db), user: Users = Depends(get_current_user)):
+    try:
 
-    result = await db.execute(
-        select(Guides)
-        .join(GuideLikes, GuideLikes.guide_id == Guides.id)
-        .where(GuideLikes.user_id == user.id)
-        .options(selectinload(Guides.tags))
+        result = await db.execute(
+            select(Guides).where(Guides.author_id == user.id).options(selectinload(Guides.tags)).order_by(Guides.created_at.desc())
+        )
+        guides = result.scalars().all()
 
-    )
-    liked_guides = result.scalars().all()
+        result = await db.execute(
+            select(Guides)
+            .join(GuideLikes, GuideLikes.guide_id == Guides.id)
+            .where(GuideLikes.user_id == user.id)
+            .options(selectinload(Guides.tags))
+
+        )
+        liked_guides = result.scalars().all()
 
 
-    return {
-        "guides": [
-            {
-                "id": guide.id,
-                "title": guide.title,
-                "description": guide.description,
-                "created_at": guide.created_at,
-                "tags": [tag.name for tag in guide.tags]
+        return {
+            "guides": [
+                {
+                    "id": guide.id,
+                    "title": guide.title,
+                    "description": guide.description,
+                    "created_at": guide.created_at,
+                    "tags": [tag.name for tag in guide.tags]
 
-            }
-            for guide in guides   
-        ],
-        "liked_guides": [
-            {
-                "id": guide.id,
-                "title": guide.title,
-                "description": guide.description,
-                "created_at": guide.created_at,
-                "tags": [tag.name for tag in guide.tags]
+                }
+                for guide in guides   
+            ],
+            "liked_guides": [
+                {
+                    "id": guide.id,
+                    "title": guide.title,
+                    "description": guide.description,
+                    "created_at": guide.created_at,
+                    "tags": [tag.name for tag in guide.tags]
 
-            }
-            for guide in liked_guides
-        ]
-    }
+                }
+                for guide in liked_guides
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting profile: {e}"
+        )
 
 # ! надо потестить йоу
 @router.get("/recs", status_code=status.HTTP_200_OK)
-async def get_recs(
+async def get_recommendations(
     limit: int = 20, 
     db: AsyncSession = Depends(get_db), 
-    user: Users = Depends(AuthService.get_current_user)
+    user: Users = Depends(get_current_user),
+    recommendation_service: RecommendationService = Depends(get_recommendation_service)
 ):
+    """
+    Получение персонализированных рекомендаций для авторизованного пользователя
+    Возвращает:
+    - recommendations: список рекомендованных путеводителей с их тегами
+    """
     try:
-        # Получаем список ID рекомендуемых путеводителей
-        guide_ids = await RecommendationService.get_recommendations_by_user_likes(
+        # Получаем рекомендации через сервис
+        guide_ids = await recommendation_service.get_user_recommendations(
             db=db,
             user_id=user.id,
             limit=limit
@@ -144,40 +158,39 @@ async def get_recs(
         if not guide_ids:
             return {"recommendations": []}
         
-        # Получаем полную информацию о путеводителях
-        stmt = select(Guides).where(Guides.id.in_(guide_ids)).options(selectinload(Guides.tags))
+        # Получаем полную информацию о путеводителях одним запросом
+        stmt = (
+            select(Guides)
+            .where(Guides.id.in_(guide_ids))
+            .options(selectinload(Guides.tags))
+        )
         result = await db.execute(stmt)
         guides = result.scalars().all()
         
-        if not guides:
-            return {"recommendations": []}
+        # Создаем словарь для быстрого доступа по ID
+        guides_dict = {guide.id: guide for guide in guides}
         
-        # Сортируем в том же порядке, что и полученные ID
-        sorted_guides = sorted(guides, key=lambda g: guide_ids.index(g.id))
-        
-        # Форматируем результат
+        # Формируем ответ, сохраняя порядок рекомендаций
         recommendations = []
-        for guide in sorted_guides:
-            recommendations.append({
-                "id": guide.id,
-                "title": guide.title,
-                "description": guide.description,
-                "tags": [tag.name for tag in guide.tags] if guide.tags else []
-            })
+        for guide_id in guide_ids:
+            guide = guides_dict.get(guide_id)
+            if guide:
+                recommendations.append({
+                    "id": guide.id,
+                    "title": guide.title,
+                    "description": guide.description,
+                    "tags": [tag.name for tag in guide.tags],
+                    "created_at": guide.created_at,
+                    "like_count": guide.like_count
+                })
         
         return {"recommendations": recommendations}
     
+    except HTTPException:
+        raise
     except Exception as e:
+        # logger.error(f"Recommendation error for user {user.id}: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error while getting recommendations: {e}"
+            detail="Не удалось получить рекомендации"
         )
-
-
-
-
-"""
-Я короче хз как тут щас делать. Надо щас сделать какое то подобие рекомендаций
-я хз правильно ли работают лайки но щас их особо не потестишь soooo я пока вслепую напишу....
-"""
-

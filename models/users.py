@@ -12,6 +12,7 @@ class Users(BaseModel):
     email = Column(String, unique=True, index=True, nullable=False)
     password = Column(String, nullable=False)
     is_verified = Column(Boolean, default=False)
+    permission_to_recovery = Column(Boolean, default=False)
     verification_code = Column(String)
     username = Column(String)
     age = Column(Integer)

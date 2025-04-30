@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 from typing import List
 import httpx
@@ -10,6 +11,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import delete, exists, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+import logger
 
 from config.appsettings import Settings
 from config.database import get_db
@@ -17,17 +19,19 @@ from config.config import content_dir
 from models.users import Users
 from models.guides import Guides
 from models.tags import Tags
+from schemas.guides import GuideBase
 from models.guideslikes import GuideLikes
 from models.guidetags import GuideTags
-from services.AuthService import AuthService
+from utils.current_user import get_current_user
+from utils.recommendation_service import get_recommendation_service
+from services.RecommendationService import RecommendationService
+from services.GuideService import GuideService
+
 
 router = APIRouter(
     prefix='/guide',
     tags=['guide']
 )
-
-
-# TODO Надо сделать маршрут для редактирования
 
 
     
@@ -53,15 +57,13 @@ async def upload_guide_image(file : UploadFile = File(...)):
 
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Catbox upload failed: {e}")
-    
 
     # http://localhost/guide/get_guide_logo/{id}
 @router.get('/get_guide_logo/{guide_id}', response_class=FileResponse,  status_code=status.HTTP_200_OK)
 async def get_guide_logo(guide_id: int, db: AsyncSession = Depends(get_db)):
     try:
-        stmt = select(Guides).where(Guides.id == guide_id)
-        result = await db.execute(stmt)
-        guide = result.scalars().first()
+        guide = await GuideService.get_guide_by_id(db, guide_id)
+
 
         if not guide:
             raise HTTPException(
@@ -71,12 +73,7 @@ async def get_guide_logo(guide_id: int, db: AsyncSession = Depends(get_db)):
         
         logo_path = guide.head_image_url
 
-        # if not logo_path.exists():
-        #     raise HTTPException(
-        #         status_code=status.HTTP_404_NOT_FOUND,
-        #         detail="Head image not found"
-        #     )
-
+        #! Нету проверки на существование лого - могут быть ошибки
         
         headers = {
         "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -93,96 +90,167 @@ async def get_guide_logo(guide_id: int, db: AsyncSession = Depends(get_db)):
         )
 
 
+# @router.post("/save_guide", status_code=status.HTTP_201_CREATED)
+# async def save_guide(
+#     data: GuideBase,
+#     logo: UploadFile = File(...),
+#     tags: List[str] = Form(...),
+#     db: AsyncSession = Depends(get_db),
+#     user: Users = Depends(get_current_user),
+# ):
+#     try:
+#         # ! Потестить, потом удалить
+#         # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+#         # safe_title = re.sub(r'[^\w\s-]', '_', data.title) #* Добавлено изменение имени папки для безопасности. 
+#         # guide_folder_name = f"{safe_title}_{timestamp}".replace(" ", "_")
+#         # guide_path = content_dir / guide_folder_name
+#         # guide_path.mkdir(parents=True, exist_ok=True)
+
+#         # md_filename = "guide.md"
+#         # md_path = guide_path / md_filename
+#         # async with aiofiles.open(md_path, "w", encoding="utf-8") as f:
+#         #     await f.write(data.markdown_text)
+
+#         # logo_filename = f"logo_{logo.filename}"
+#         # logo_path = guide_path / logo_filename
+#         # with open(logo_path, "wb") as out_logo:
+#         #     shutil.copyfileobj(logo.file, out_logo)
+#         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+#         guide_folder_name = GuideService.sanitize_folder_name(data.title, timestamp)
+#         guide_path = content_dir / guide_folder_name
+        
+#         md_path = GuideService.save_markdown_file(guide_path, data.markdown_text)
+#         logo_path = GuideService.save_logo_file(guide_path, logo)
+
+#         guide = Guides(
+#             title=data.title,
+#             description=data.description,
+#             content_file_url=str(md_path),
+#             head_image_url=str(logo_path),
+#             author_id=user.id
+#         )
+#         db.add(guide)
+#         await db.flush()
+
+#         tag_objects = []
+#         for tag_name in tags:
+#             tag_name = tag_name.strip()
+#             tag_query = await db.execute(select(Tags).where(Tags.name == tag_name))
+#             tag = tag_query.scalar_one_or_none()
+#             if not tag:
+#                 tag = Tags(name=tag_name)
+#                 db.add(tag)
+#                 await db.flush()
+#             tag_objects.append(tag)
+
+#         # Создание связей в guide_tags
+#         for tag in tag_objects:
+#             link = GuideTags(guide_id=guide.id, tag_id=tag.id)
+#             db.add(link)
+
+#         await db.commit()
+
+
+#         return {"message": "Guide saved successfully"}
+
+#     except Exception as e:
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail=f"Error while saving guide: {e}"
+#         )
 
 @router.post("/save_guide", status_code=status.HTTP_201_CREATED)
 async def save_guide(
-    title: str = Form(...),
-    description: str = Form(...),
-    markdown_text: str = Form(...),
+    data: GuideBase,
     logo: UploadFile = File(...),
     tags: List[str] = Form(...),
     db: AsyncSession = Depends(get_db),
-    user: Users = Depends(AuthService.get_current_user),
+    user: Users = Depends(get_current_user),
+    recommendation_service: RecommendationService = Depends(get_recommendation_service)
 ):
     try:
+        # Создание папки и сохранение файлов
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        guide_folder_name = f"{title}_{timestamp}".replace(" ", "_")
+        guide_folder_name = GuideService.sanitize_folder_name(data.title, timestamp)
         guide_path = content_dir / guide_folder_name
-        guide_path.mkdir(parents=True, exist_ok=True)
+        
+        md_path = GuideService.save_markdown_file(guide_path, data.markdown_text)
+        logo_path = GuideService.save_logo_file(guide_path, logo)
 
-        md_filename = "guide.md"
-        md_path = guide_path / md_filename
-        async with aiofiles.open(md_path, "w", encoding="utf-8") as f:
-            await f.write(markdown_text)
-
-        logo_filename = f"logo_{logo.filename}"
-        logo_path = guide_path / logo_filename
-        with open(logo_path, "wb") as out_logo:
-            shutil.copyfileobj(logo.file, out_logo)
-
+        # Создание путеводителя
         guide = Guides(
-            title=title,
-            description=description,
+            title=data.title,
+            description=data.description,
             content_file_url=str(md_path),
             head_image_url=str(logo_path),
             author_id=user.id
         )
         db.add(guide)
-        await db.flush()
+        await db.flush()  # Получаем ID guide
 
+        # Обработка тегов
         tag_objects = []
         for tag_name in tags:
             tag_name = tag_name.strip()
-            tag_query = await db.execute(select(Tags).where(Tags.name == tag_name))
-            tag = tag_query.scalar_one_or_none()
+            tag = await db.scalar(select(Tags).where(Tags.name == tag_name))
             if not tag:
                 tag = Tags(name=tag_name)
                 db.add(tag)
                 await db.flush()
             tag_objects.append(tag)
 
-        # Создание связей в guide_tags
-        for tag in tag_objects:
-            link = GuideTags(guide_id=guide.id, tag_id=tag.id)
-            db.add(link)
+        # Связи с тегами
+        db.add_all([
+            GuideTags(guide_id=guide.id, tag_id=tag.id) 
+            for tag in tag_objects
+        ])
 
         await db.commit()
 
+        # Индексация нового путеводителя (после коммита)
+        try:
+            # Явно загружаем теги для индексации
+            await db.refresh(guide)
+            guide.tags = tag_objects
+            
+            await recommendation_service.index_guide(guide)
+        except Exception as e:
+            logger.error(f"Failed to index guide {guide.id}: {e}")
+            # Не прерываем выполнение, т.к. основное сохранение прошло успешно
 
-        return {"message": "Guide saved successfully"}
+        return {
+            "message": "Guide saved successfully",
+            "guide_id": guide.id
+        }
 
     except Exception as e:
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error while saving guide: {e}"
+            detail="Error while saving guide"
         )
-    
+
 @router.put('/edit/{guide_id}', status_code=status.HTTP_202_ACCEPTED)
 async def edit_guide(
     guide_id: int,
-    title: str = Form(...),
-    description: str = Form(...),
-    markdown_text: str = Form(...),
+    data: GuideBase,
     db: AsyncSession = Depends(get_db),
-    user: Users = Depends(AuthService.get_current_user)):
+    user: Users = Depends(get_current_user)):
     
     try:
-        result = await db.execute(
-            select(Guides).where(Guides.id == guide_id, Guides.author_id == user.id)
-        )
+        guide = await GuideService.get_guide_by_id(db, guide_id, user)
 
-        if not result:
+        if not guide:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail='Editing guide not found or not owned by user'
             )
         
-        guide = result.scalar_one_or_none()
         
-        if markdown_text is not None:
+        if data.markdown_text is not None:
             try:
                 with open(guide.content_file_url, 'w', encoding='utf-8') as md_file:
-                    md_file.write(markdown_text)
+                    md_file.write(data.markdown_text)
             
             except Exception as e:
                 raise HTTPException(
@@ -190,10 +258,10 @@ async def edit_guide(
                     detail=f'Failed to update guide: {e}'
                 )
             
-        if title:
-            guide.title = title
-        if description:
-            guide.description = description
+        if data.title:
+            guide.title = data.title
+        if data.description:
+            guide.description = data.description
 
 
         await db.commit()
@@ -209,12 +277,9 @@ async def edit_guide(
         )
             
 @router.delete("/delete/{guide_id}", status_code=status.HTTP_202_ACCEPTED)
-async def delete_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Users = Depends(AuthService.get_current_user)):
+async def delete_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Users = Depends(get_current_user)):
     try:
-        result = await db.execute(
-            select(Guides).where(Guides.id == guide_id, Guides.author_id == user.id).options(selectinload(Guides.tags))
-        )
-        guide = result.scalar_one_or_none()
+        guide = await GuideService.get_guide_by_id(db, guide_id, user)
 
         if not guide:
             raise HTTPException(
@@ -254,60 +319,67 @@ async def delete_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: 
         )  
 
 @router.get("/read_guide/{guide_id}", status_code=status.HTTP_200_OK)
-async def read_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Users = Depends(AuthService.get_current_user)):
-
-    result = await db.execute(
-        select(Guides).where(Guides.id == guide_id).options(selectinload(Guides.author), selectinload(Guides.tags))
-    )
-    guide = result.scalar_one_or_none()
-
-    if not guide:
-        raise HTTPException(status_code=404, detail="Guide not found")
+async def read_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Users = Depends(get_current_user)):
 
     try:
-        md_path = Path(guide.content_file_url)
-        async with aiofiles.open(md_path, mode="r", encoding="utf-8") as f:
-            markdown_text = await f.read()
+        result = await db.execute(
+            select(Guides).where(Guides.id == guide_id).options(selectinload(Guides.author), selectinload(Guides.tags))
+        )
+        guide = result.scalar_one_or_none()
 
-        is_liked = False
-
-        if user:
-            result = await db.execute(
-                select(GuideLikes).where(
-                    GuideLikes.user_id == user.id,
-                    GuideLikes.guide_id == guide.id
-                )
-            )
-            is_liked = result.scalar_one_or_none() is not None
-
-
-        return {
-            "title": guide.title,
-            "description": guide.description,
-            "markdown_text": markdown_text,
-            "author": guide.author.nickname,
-            "liked_by_user": is_liked,
-            "likes_count": guide.like_count,
-            "tags": [tag.name for tag in guide.tags],
-            "created_at": guide.created_at
-        }
-
+        if not guide:
+            raise HTTPException(status_code=404, detail="Guide not found")
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error reading guide file: {e}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f'Error while reading guide: {e}'
         )
+    else:
 
+        try:
+            md_path = Path(guide.content_file_url)
+            async with aiofiles.open(md_path, mode="r", encoding="utf-8") as f:
+                markdown_text = await f.read()
+
+            is_liked = False
+
+            if user:
+                result = await db.execute(
+                    select(GuideLikes).where(
+                        GuideLikes.user_id == user.id,
+                        GuideLikes.guide_id == guide.id
+                    )
+                )
+                is_liked = result.scalar_one_or_none() is not None
+
+
+            return {
+                "title": guide.title,
+                "description": guide.description,
+                "markdown_text": markdown_text,
+                "author": guide.author.nickname,
+                "liked_by_user": is_liked,
+                "likes_count": guide.like_count,
+                "tags": [tag.name for tag in guide.tags],
+                "created_at": guide.created_at
+            }
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error reading guide file: {e}"
+            )
 
 @router.post('/like/{guide_id}', status_code=status.HTTP_202_ACCEPTED)
-async def like_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Users = Depends(AuthService.get_current_user)):
+async def like_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Users = Depends(get_current_user)):
     try:
         result = await db.execute(
             select(GuideLikes).where(GuideLikes.user_id == user.id, GuideLikes.guide_id == guide_id)
         )
         existing = result.scalar_one_or_none()
-        guide_response = await db.execute(select(Guides).where(Guides.id == guide_id))
-        guide = guide_response.scalar_one_or_none()
+
+        guide = await GuideService.get_guide_by_id(db, guide_id)
+
         
         if guide:
             if existing:
@@ -331,11 +403,10 @@ async def like_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Us
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Server error when trying to like: {e}"
         )
-
-            
+   
 @router.get("/tags", status_code=status.HTTP_200_OK)
 async def get_tags(db: AsyncSession = Depends(get_db)):
-    try:
+    try: #Возвращает все уникальные теги
         tags_result = await db.execute(select(Tags.name).distinct())
         all_tags = [row.name for row in tags_result.fetchall()]
 
@@ -345,6 +416,3 @@ async def get_tags(db: AsyncSession = Depends(get_db)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error while extraction tags: {e}"
         )
-
-
-#TODO надо потестить теги, мб че то добавить -> сделать рексервис и выгрузку на странички. 

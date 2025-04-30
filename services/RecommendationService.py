@@ -1,3 +1,4 @@
+import time
 from config.database import get_db
 from models.users import Users
 from models.guides import Guides
@@ -15,403 +16,304 @@ from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import logging
-from collections import Counter
+from collections import Counter, defaultdict
 import re
+from chromadb.config import Settings
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
-class RecommendationService:
-    """Сервис рекомендаций на основе контента (content-based filtering)"""
 
-    model_name = "all-MiniLM-L6-v2"
-    collection_name = "guides"
+class RecommendationService:
+    """Сервис рекомендаций с улучшенной производительностью и точностью"""
     
-    @staticmethod
-    def get_embedding_model():
-        """Получение модели для создания эмбеддингов"""
-        try:
-            return SentenceTransformer(RecommendationService.model_name)
-        except Exception as e:
-            logger.error(f"Error initializing embedding model: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error initializing recommendation service: {e}"
-            )
+    # Конфигурация
+    MODEL_NAME = "all-MiniLM-L6-v2"
+    COLLECTION_NAME = "travel_guides"
+    EMBEDDING_CACHE_SIZE = 1000
+    MAX_CONCURRENT_EMBEDDINGS = 4
     
-    @staticmethod
-    def get_chroma_client():
-        """Получение клиента ChromaDB"""
+    # Веса для разных частей контента
+    TITLE_WEIGHT = 0.5
+    DESCRIPTION_WEIGHT = 0.3
+    TAGS_WEIGHT = 0.2
+
+    def __init__(self):
         try:
-            return chromadb.Client()
-        except Exception as e:
-            logger.error(f"Error initializing ChromaDB client: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error initializing vector storage"
-            )
-    
-    @staticmethod
-    def get_collection():
-        """Получение или создание коллекции в ChromaDB"""
-        try:
-            client = RecommendationService.get_chroma_client()
-            model = RecommendationService.get_embedding_model()
+            # Инициализация модели для эмбеддингов
+            self.embedding_model = SentenceTransformer(self.MODEL_NAME)
             
-            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name=RecommendationService.model_name
+            # Новый клиент ChromaDB
+            self.chroma_client = chromadb.PersistentClient(
+                path="./chroma_db",
+                settings=Settings(allow_reset=True)
             )
             
-            return client.get_or_create_collection(
-                name=RecommendationService.collection_name,
-                embedding_function=embedding_function
+            # Коллекция
+            self.collection = self.chroma_client.get_or_create_collection(
+                name=self.COLLECTION_NAME,
+                embedding_function=embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name=self.MODEL_NAME
+                )
             )
+            
         except Exception as e:
-            logger.error(f"Error creating ChromaDB collection: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error initializing vector collection"
+            logger.critical(f"Ошибка инициализации: {e}")
+            raise RuntimeError("Не удалось инициализировать сервис рекомендаций")
+    
+    def _init_resources(self):
+        """Инициализация ресурсов при создании сервиса"""
+        try:
+            # Модель для эмбеддингов
+            self.embedding_model = SentenceTransformer(self.MODEL_NAME)
+            
+            # Настройки ChromaDB
+            self.chroma_client = chromadb.Client(Settings(
+                chroma_db_impl="duckdb+parquet",
+                persist_directory="./chroma_db"
+            ))
+            
+            # Коллекция в ChromaDB
+            self.collection = self.chroma_client.get_or_create_collection(
+                name=self.COLLECTION_NAME,
+                embedding_function=embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name=self.MODEL_NAME
+                )
             )
+            
+        except Exception as e:
+            logger.critical(f"Ошибка инициализации RecommendationService: {e}")
+            raise RuntimeError("Не удалось инициализировать сервис рекомендаций")
 
     @staticmethod
     def preprocess_text(text: str) -> str:
-        """Предобработка текста для векторизации"""
+        """Предварительная обработка текста"""
         if not text:
             return ""
-        
-        # Приведение к нижнему регистру
-        text = text.lower()
-        # Удаление лишних пробелов
-        text = re.sub(r'\s+', ' ', text)
-        # Удаление специальных символов
-        text = re.sub(r'[^\w\s]', '', text)
-        
-        return text.strip()
-
-    @staticmethod
-    async def index_all_guides(db: AsyncSession) -> int:
-        """Индексация всех путеводителей в векторной базе данных"""
+        return text.lower().strip()
+    
+    async def index_all_guides(self, db: AsyncSession) -> int:
+        """Полная индексация всех путеводителей"""
         try:
-            collection = RecommendationService.get_collection()
+            start_time = time.time()
             
-            # Получение всех путеводителей с подгрузкой тегов
-            stmt = select(Guides).options(selectinload(Guides.tags))
-            result = await db.execute(stmt)
-            guides = result.scalars().all()
-            
-            if not guides:
-                logger.info("There are no guides to index.")
-                return 0
-            
-            # Подготовка данных для загрузки в ChromaDB
-            documents = []
-            metadatas = []
-            ids = []
-            
-            for guide in guides:
-                # Объединение заголовка, описания и тегов
-                tags_text = " ".join([tag.name for tag in guide.tags]) if guide.tags else ""
-                text = f"{guide.title}. {guide.description or ''} {tags_text}"
-                text = RecommendationService.preprocess_text(text)
-                
-                if text:  # Проверка, что текст не пустой после обработки
-                    documents.append(text)
-                    metadatas.append({
-                        "guide_id": guide.id,
-                        "title": guide.title,
-                        "tags": tags_text
-                    })
-                    ids.append(str(guide.id))
-            
-            # Очистка коллекции перед обновлением
-            collection.delete(where={"guide_id": {"$exists": True}})
-            
-            # Добавление новых данных в коллекцию
-            if documents:
-                collection.add(
-                    documents=documents,
-                    metadatas=metadatas,
-                    ids=ids
-                )
-                
-            return len(documents)
-        except Exception as e:
-            logger.error(f"Ошибка при индексации путеводителей: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error indexing guides: {str(e)}"
-            )
-
-    @staticmethod
-    async def index_guide(db: AsyncSession, guide_id: int) -> bool:
-        """Индексация одного путеводителя в векторной базе данных"""
-        try:
-            collection = RecommendationService.get_collection()
-            
-            # Получение путеводителя с подгрузкой тегов
-            stmt = select(Guides).where(Guides.id == guide_id).options(selectinload(Guides.tags))
-            result = await db.execute(stmt)
-            guide = result.scalar_one_or_none()
-            
-            if not guide:
-                logger.warning(f"Guide with id {guide_id} not found")
-                return False
-            
-            # Подготовка данных для загрузки в ChromaDB
-            tags_text = " ".join([tag.name for tag in guide.tags]) if guide.tags else ""
-            text = f"{guide.title}. {guide.description or ''} {tags_text}"
-            text = RecommendationService.preprocess_text(text)
-            
-            if not text:
-                logger.warning(f"Empty content for guide with id {guide_id}")
-                return False
-                
-            # Удаление существующего документа, если он уже был индексирован
+            # Очистка существующей коллекции
             try:
-                collection.delete(ids=[str(guide_id)])
+                self.chroma_client.delete_collection(name=self.COLLECTION_NAME)
             except:
-                pass  # Игнорируем ошибку, если документ не существует
+                pass
                 
-            # Добавление нового документа
-            collection.add(
-                documents=[text],
+            # Создание новой коллекции
+            self.collection = self.chroma_client.create_collection(
+                name=self.COLLECTION_NAME,
+                embedding_function=embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name=self.MODEL_NAME
+                )
+            )
+            
+            # Пакетная индексация
+            batch_size = 100
+            offset = 0
+            total_indexed = 0
+            
+            while True:
+                stmt = select(Guides).options(selectinload(Guides.tags)).offset(offset).limit(batch_size)
+                result = await db.execute(stmt)
+                guides = result.scalars().all()
+                
+                if not guides:
+                    break
+                
+                # Подготовка данных для индексации
+                documents = []
+                metadatas = []
+                ids = []
+                
+                for guide in guides:
+                    doc = self._create_guide_document(guide)
+                    if doc:
+                        documents.append(doc)
+                        metadatas.append({
+                            "guide_id": guide.id,
+                            "title": guide.title,
+                            "tags": " ".join([tag.name for tag in guide.tags]) if guide.tags else ""
+                        })
+                        ids.append(str(guide.id))
+                
+                # Добавление в коллекцию
+                if documents:
+                    self.collection.add(
+                        documents=documents,
+                        metadatas=metadatas,
+                        ids=ids
+                    )
+                    total_indexed += len(documents)
+                
+                offset += batch_size
+            
+            logger.info(f"Индексация завершена. Путеводителей: {total_indexed}, время: {time.time()-start_time:.2f}с")
+            return total_indexed
+            
+        except Exception as e:
+            logger.error(f"Ошибка полной индексации: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Ошибка индексации путеводителей: {e}"
+            )
+    
+    async def index_guide(self, guide: Guides) -> bool:
+        """Индексация одного путеводителя"""
+        try:
+            doc = self._create_guide_document(guide)
+            if not doc:
+                return False
+                
+            self.collection.upsert(
+                ids=[str(guide.id)],
+                documents=[doc],
                 metadatas=[{
                     "guide_id": guide.id,
                     "title": guide.title,
-                    "tags": tags_text
-                }],
-                ids=[str(guide_id)]
+                    "tags": " ".join([tag.name for tag in guide.tags]) if guide.tags else ""
+                }]
             )
-            
             return True
-        except Exception as e:
-            logger.error(f"Error indexing guides {guide_id}: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error indexing guides: {str(e)}"
-            )
-
-    @staticmethod
-    async def get_user_liked_guides(db: AsyncSession, user_id: int) -> List[Guides]:
-        """Получение путеводителей, которые понравились пользователю"""
-        try:
-            stmt = select(Guides).join(GuideLikes).where(
-                GuideLikes.user_id == user_id
-            ).options(selectinload(Guides.tags))
             
-            result = await db.execute(stmt)
-            return result.scalars().all()
         except Exception as e:
-            logger.error(f"Ошибка при получении лайкнутых путеводителей: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error while getting liked guides"
-            )
-
-    @staticmethod
-    def get_guides_by_ids(guide_ids: List[int], db: AsyncSession) -> List[Guides]:
-        """Получение путеводителей по списку ID"""
-        try:
-            stmt = select(Guides).where(Guides.id.in_(guide_ids)).options(selectinload(Guides.tags))
-            result = db.execute(stmt)
-            return result.scalars().all()
-        except Exception as e:
-            logger.error(f"Ошибка при получении путеводителей по ID: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error while getting guides"
-            )
-
-    @staticmethod
-    async def get_recommendations_by_user_likes(
-        db: AsyncSession, 
-        user_id: int, 
-        limit: int = 10, 
+            logger.error(f"Ошибка индексации путеводителя {guide.id}: {e}")
+            return False
+    
+    def _create_guide_document(self, guide: Guides) -> str:
+        """Создание документа для индексации с учетом весов"""
+        title = self.preprocess_text(guide.title) * self.TITLE_WEIGHT
+        desc = self.preprocess_text(guide.description) * self.DESCRIPTION_WEIGHT if guide.description else ""
+        tags = " ".join([self.preprocess_text(tag.name) for tag in guide.tags]) * self.TAGS_WEIGHT if guide.tags else ""
+        
+        return f"{title} {desc} {tags}".strip()
+    
+    async def get_user_recommendations(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        limit: int = 10,
         exclude_liked: bool = True
     ) -> List[int]:
-        """Получение рекомендаций на основе лайкнутых пользователем путеводителей"""
+        """Получение рекомендаций для пользователя"""
         try:
-            # Получение понравившихся путеводителей
-            liked_guides = await RecommendationService.get_user_liked_guides(db, user_id)
+            # Контентные рекомендации
+            content_recs = await self._get_content_recommendations(db, user_id, limit, exclude_liked)
             
-            if not liked_guides:
-                logger.info(f"Пользователь {user_id} не лайкнул ни одного путеводителя")
-                # Возвращаем популярные путеводители, если у пользователя нет лайков
-                return await RecommendationService.get_popular_guides(db, limit)
+            # Если недостаточно, добавляем рекомендации по тегам
+            if len(content_recs) < limit:
+                tag_recs = await self._get_tag_recommendations(db, user_id, limit - len(content_recs), exclude_liked)
+                content_recs.extend(tag_recs)
             
-            # Получение коллекции ChromaDB
-            collection = RecommendationService.get_collection()
+            # Если все еще недостаточно, добавляем популярные
+            if len(content_recs) < limit:
+                popular_recs = await self._get_popular_guides(db, limit - len(content_recs))
+                content_recs.extend(popular_recs)
             
-            # Создание запроса на основе лайкнутых путеводителей
-            liked_ids = [guide.id for guide in liked_guides]
-            liked_texts = []
-            
-            # Создание текста запроса из заголовков, описаний и тегов лайкнутых путеводителей
-            for guide in liked_guides:
-                tags_text = " ".join([tag.name for tag in guide.tags]) if guide.tags else ""
-                text = f"{guide.title}. {guide.description or ''} {tags_text}"
-                text = RecommendationService.preprocess_text(text)
-                if text:
-                    liked_texts.append(text)
-            
-            if not liked_texts:
-                logger.warning(f"Не удалось создать запрос из лайкнутых путеводителей пользователя {user_id}")
-                return await RecommendationService.get_popular_guides(db, limit)
-            
-            # Объединение текстов для запроса
-            query_text = " ".join(liked_texts)
-            
-            # Исключаем уже понравившиеся путеводители из результатов
-            where_clause = {}
-            if exclude_liked and liked_ids:
-                where_ids = [str(id) for id in liked_ids]
-                where_clause = {"$and": [{"guide_id": {"$nin": liked_ids}}]}
-                
-            # Получение рекомендаций из ChromaDB
-            results = collection.query(
-                query_texts=[query_text],
-                n_results=limit + len(liked_ids) if exclude_liked else limit,  # Запрашиваем больше, если исключаем лайкнутые
-                where=where_clause if where_clause else None
-            )
-            
-            # Обработка результатов
-            guide_ids = []
-            if 'metadatas' in results and results['metadatas']:
-                for metadata in results['metadatas'][0]:
-                    if 'guide_id' in metadata:
-                        guide_id = metadata['guide_id']
-                        if not exclude_liked or guide_id not in liked_ids:
-                            guide_ids.append(guide_id)
-            
-            # Ограничиваем количество результатов
-            return guide_ids[:limit]
+            return content_recs[:limit]
             
         except Exception as e:
-            logger.error(f"Ошибка при получении рекомендаций: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error while getting recommendations"
-            )
-    #* Обязательно потом отредачить функцию и перенести сюда логику популярных
-    # @staticmethod
-    # async def get_popular_guides(db: AsyncSession, limit: int = 10) -> List[int]:
-    #     """Получение популярных путеводителей по количеству лайков"""
-    #     try:
-    #         stmt = select(Guides.id).order_by(Guides.like_count.desc()).limit(limit)
-    #         result = await db.execute(stmt)
-    #         return [guide_id for guide_id, in result.all()]
-    #     except Exception as e:
-    #         logger.error(f"Ошибка при получении популярных путеводителей: {e}")
-    #         raise HTTPException(
-    #             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-    #             detail="Ошибка при получении популярных путеводителей"
-    #         )
+            logger.error(f"Ошибка рекомендаций для пользователя {user_id}: {e}")
+            return await self._get_popular_guides(db, limit)
     
-    # @staticmethod
-    # async def get_similar_guides(db: AsyncSession, guide_id: int, limit: int = 5) -> List[int]:
-    #     """Получение путеводителей, похожих на заданный"""
-    #     try:
-    #         # Получение исходного путеводителя
-    #         stmt = select(Guides).where(Guides.id == guide_id).options(selectinload(Guides.tags))
-    #         result = await db.execute(stmt)
-    #         guide = result.scalar_one_or_none()
+    async def _get_content_recommendations(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        limit: int,
+        exclude_liked: bool
+    ) -> List[int]:
+        """Рекомендации на основе контента"""
+        liked_guides = await self._get_liked_guides(db, user_id)
+        if not liked_guides:
+            return []
             
-    #         if not guide:
-    #             raise HTTPException(
-    #                 status_code=status.HTTP_404_NOT_FOUND,
-    #                 detail=f"Путеводитель с ID {guide_id} не найден"
-    #             )
+        # Создаем запрос из лайкнутых путеводителей
+        query_parts = [self._create_guide_document(g) for g in liked_guides]
+        query_text = " ".join([p for p in query_parts if p])
+        
+        if not query_text:
+            return []
             
-    #         # Получение коллекции ChromaDB
-    #         collection = RecommendationService.get_collection()
-            
-    #         # Создание запроса из заголовка, описания и тегов путеводителя
-    #         tags_text = " ".join([tag.name for tag in guide.tags]) if guide.tags else ""
-    #         query_text = f"{guide.title}. {guide.description or ''} {tags_text}"
-    #         query_text = RecommendationService.preprocess_text(query_text)
-            
-    #         if not query_text:
-    #             logger.warning(f"Пустой запрос для путеводителя {guide_id}")
-    #             return await RecommendationService.get_popular_guides(db, limit)
-            
-    #         # Получение похожих путеводителей из ChromaDB
-    #         results = collection.query(
-    #             query_texts=[query_text],
-    #             n_results=limit + 1,  # +1 чтобы исключить сам путеводитель
-    #             where={"$and": [{"guide_id": {"$ne": guide_id}}]}
-    #         )
-            
-    #         # Обработка результатов
-    #         guide_ids = []
-    #         if 'metadatas' in results and results['metadatas']:
-    #             for metadata in results['metadatas'][0]:
-    #                 if 'guide_id' in metadata and metadata['guide_id'] != guide_id:
-    #                     guide_ids.append(metadata['guide_id'])
-            
-    #         return guide_ids[:limit]
-            
-    #     except HTTPException as he:
-    #         raise he
-    #     except Exception as e:
-    #         logger.error(f"Ошибка при получении похожих путеводителей: {e}")
-    #         raise HTTPException(
-    #             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-    #             detail="Ошибка при получении похожих путеводителей"
-    #         )
+        # Исключаем лайкнутые
+        liked_ids = [g.id for g in liked_guides] if exclude_liked else []
+        where = {"guide_id": {"$nin": liked_ids}} if liked_ids else None
+        
+        # Запрос к ChromaDB
+        results = self.collection.query(
+            query_texts=[query_text],
+            n_results=limit + len(liked_ids),
+            where=where
+        )
+        
+        return [m["guide_id"] for m in results["metadatas"][0] if m and "guide_id" in m][:limit]
     
-    @staticmethod
-    async def get_recommendations_by_tags(db: AsyncSession, tag_ids: List[int], limit: int = 10) -> List[int]:
-        """Получение рекомендаций на основе выбранных тегов"""
-        try:
-            # Получение имен тегов
-            stmt = select(Tags).where(Tags.id.in_(tag_ids))
-            result = await db.execute(stmt)
-            tags = result.scalars().all()
+    async def _get_tag_recommendations(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        limit: int,
+        exclude_liked: bool
+    ) -> List[int]:
+        """Рекомендации на основе тегов"""
+        liked_guides = await self._get_liked_guides(db, user_id)
+        if not liked_guides:
+            return []
             
-            if not tags:
-                logger.info("Теги не найдены")
-                return await RecommendationService.get_popular_guides(db, limit)
+        # Собираем популярные теги
+        tag_counts = {}
+        for guide in liked_guides:
+            for tag in guide.tags:
+                tag_counts[tag.id] = tag_counts.get(tag.id, 0) + 1
+        
+        if not tag_counts:
+            return []
             
-            # Создание запроса из имен тегов
-            tag_names = [tag.name for tag in tags]
-            query_text = " ".join(tag_names)
-            query_text = RecommendationService.preprocess_text(query_text)
+        # Ищем путеводители с этими тегами
+        top_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+        tag_ids = [tag_id for tag_id, _ in top_tags]
+        
+        stmt = (
+            select(Guides.id)
+            .join(GuideTags)
+            .where(GuideTags.tag_id.in_(tag_ids))
+            .group_by(Guides.id)
+            .order_by(func.count().desc())
+            .limit(limit)
+        )
+        
+        if exclude_liked:
+            liked_ids = [g.id for g in liked_guides]
+            stmt = stmt.where(Guides.id.notin_(liked_ids))
             
-            if not query_text:
-                logger.warning("Пустой запрос из тегов")
-                return await RecommendationService.get_popular_guides(db, limit)
-            
-            # Получение коллекции ChromaDB
-            collection = RecommendationService.get_collection()
-            
-            # Получение рекомендаций из ChromaDB
-            results = collection.query(
-                query_texts=[query_text],
-                n_results=limit
-            )
-            
-            # Обработка результатов
-            guide_ids = []
-            if 'metadatas' in results and results['metadatas']:
-                for metadata in results['metadatas'][0]:
-                    if 'guide_id' in metadata:
-                        guide_ids.append(metadata['guide_id'])
-            
-            return guide_ids[:limit]
-            
-        except Exception as e:
-            logger.error(f"Ошибка при получении рекомендаций по тегам: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error getting tag recommendations"
-            )
-            
-    @staticmethod
-    async def delete_guide_from_index(guide_id: int) -> bool:
+        result = await db.execute(stmt)
+        return [row[0] for row in result.all()]
+    
+    async def _get_liked_guides(self, db: AsyncSession, user_id: int) -> List[Guides]:
+        """Получение лайкнутых путеводителей"""
+        stmt = (
+            select(Guides)
+            .join(GuideLikes)
+            .where(GuideLikes.user_id == user_id)
+            .options(selectinload(Guides.tags))
+        )
+        result = await db.execute(stmt)
+        return result.scalars().all()
+    
+    async def _get_popular_guides(self, db: AsyncSession, limit: int) -> List[int]:
+        """Получение популярных путеводителей"""
+        stmt = select(Guides.id).order_by(Guides.like_count.desc()).limit(limit)
+        result = await db.execute(stmt)
+        return [row[0] for row in result.all()]
+    
+    async def delete_guide(self, guide_id: int) -> bool:
         """Удаление путеводителя из индекса"""
         try:
-            collection = RecommendationService.get_collection()
-            collection.delete(ids=[str(guide_id)])
+            self.collection.delete(ids=[str(guide_id)])
             return True
         except Exception as e:
-            logger.error(f"Ошибка при удалении путеводителя {guide_id} из индекса: {e}")
+            logger.error(f"Ошибка удаления путеводителя {guide_id}: {e}")
             return False

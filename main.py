@@ -1,10 +1,12 @@
 from contextlib import asynccontextmanager
+import time
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 import logging
 import uvicorn
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 from models.basemodel import BaseModel
@@ -16,16 +18,41 @@ from routes.auth import router as AuthRouter
 from routes.user import router as UserRouter
 from routes.guides import router as GuideRouter
 from routes.pages import router as PageRouter
+from services.RecommendationService import RecommendationService
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Создание таблиц в БД
     async with engine.begin() as conn:
-        # await conn.run_sync(BaseModel.metadata.drop_all)
+        await conn.run_sync(BaseModel.metadata.drop_all)
         await conn.run_sync(BaseModel.metadata.create_all)
-
-    yield
-
+        
+    
+    # Инициализация сервиса рекомендаций
+    recommendation_service = RecommendationService()
+    
+    # Проверка и индексация путеводителей
+    db = AsyncSession(engine)
+    try:
+        start_time = time.time()
+        indexed_count = await recommendation_service.index_all_guides(db)
+        elapsed = time.time() - start_time
+        
+        logging.info(f"Initial indexing completed. Indexed {indexed_count} guides in {elapsed:.2f} seconds")
+        
+    except Exception as e:
+        logging.critical(f"Failed to index guides on startup: {e}")
+        # Можно добавить отправку уведомления администратору
+        raise  # Прерываем запуск если индексация критически важна
+    finally:
+        await db.close()
+    
+    yield  # Приложение работает
+    
+    # Завершение работы
     await engine.dispose()
+    logging.info("Application shutdown completed")
+
 
 logging.basicConfig(
     level=logging.INFO,

@@ -11,6 +11,7 @@ from schemas.auth import Token, TokenData, LoginRequest, Tokens
 from schemas.user import UserCreate, UserVerify
 from services.AuthService import AuthService
 from services.EmailService import EmailService
+from utils.current_user import get_current_user
 
 router = APIRouter(
     prefix='/auth',
@@ -61,6 +62,7 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
             detail=f'Server error occured. Registration failed: {e}'
         )
 
+
 @router.post('/verify', status_code=status.HTTP_202_ACCEPTED)
 async def verify(user_data: UserVerify, db: AsyncSession = Depends(get_db)):
     try:
@@ -70,14 +72,18 @@ async def verify(user_data: UserVerify, db: AsyncSession = Depends(get_db)):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail='User not found'
             )
-        
+
         if user.verification_code != user_data.verification_code:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Invalid verification code'
             )
-        
-        user.is_verified = True
+        # * Чуть колхоз, надо добавить отдельную таблицу для верификаций.
+        if user.is_verified:
+            user.permission_to_recovery = True
+        else:
+            user.is_verified = True
+
         user.verification_code = None
 
         await db.commit()
@@ -91,7 +97,8 @@ async def verify(user_data: UserVerify, db: AsyncSession = Depends(get_db)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f'Server error occured. User verification failed: {e}'
         )
-    
+
+
 @router.post('/login', response_model=Tokens, status_code=status.HTTP_202_ACCEPTED)
 async def login(user_data: LoginRequest, db: AsyncSession = Depends(get_db)):
     try:
@@ -201,9 +208,70 @@ async def refresh_token(token: Token, db: AsyncSession = Depends(get_db)):
             detail=f"Refresh token error: {e}"
         )
 
+# TODO Добавить роут восстановления пароля
+@router.post('/recovery', status_code=status.HTTP_202_ACCEPTED)
+async def password_recovery(email: str, db: AsyncSession = Depends(get_db)):
+        # Принимается почта -> Проверка на существование в базе -> отправка кода на сброс -> принимается код -> принимается новый пароль
+    try:
+        user = await AuthService.get_user_by_email(db=db, email=email)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User email not found"
+            )
+        verification_code = AuthService.generate_verification_code()
+
+
+        user.verification_code = verification_code
+
+        await EmailService.send_password_recovery_email(email=email, code=verification_code)
+
+        await db.commit()
+
+        return {"message":"Password recovery message sent to email"}
+    
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error sending verification code: {e}"
+        )
+    
+@router.post('/change_password', status_code=status.HTTP_202_ACCEPTED)
+async def change_password(user_data = UserCreate, db : AsyncSession = Depends(get_db)):
+    try:
+        user = await AuthService.get_user_by_email(db=db, email=user_data.email)
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User email not found"
+            )
+        if not user.permission_to_recovery:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Password update forbidden"
+            )
+        
+        new_password = AuthService.get_password_hash(user_data.password)
+        user.password = new_password
+        user.permission_to_recovery = False
+
+
+        await db.commit()
+        
+        return {"message" : "User password updated"}
+
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating password"
+        )
+
 
 @router.post('/logout', status_code=status.HTTP_202_ACCEPTED)
-async def logout(user: Users = Depends(AuthService.get_current_user), db: AsyncSession = Depends(get_db)):
+async def logout(user: Users = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     try:
         # Найти все активные токены пользователя
         stmt = select(RefreshTokens).where(

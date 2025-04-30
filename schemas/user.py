@@ -19,6 +19,7 @@ class UserVerified(User):
 class UserVerify(BaseModel):
     email: Optional[EmailStr]
     nickname: Optional[str]
+    
     verification_code: str
 
     @model_validator(mode='after')

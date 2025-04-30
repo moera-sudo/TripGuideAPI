@@ -7,7 +7,6 @@ from passlib.context import CryptContext
 from jose import JWTError, jwt, ExpiredSignatureError
 from typing import Optional, Annotated, List
 from fastapi import HTTPException, status, Depends
-from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
@@ -18,12 +17,9 @@ import string
 import logging
 
 logger = logging.getLogger(__name__)
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl='auth/login')
 
 
 class AuthService:
-
-
 
     pwdContext = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -173,33 +169,9 @@ class AuthService:
                 status_code=500,
                 detail='Database error occurred'
             )
-    
-    
-    @staticmethod
-    async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)], db: AsyncSession = Depends(get_db)) -> Users:
-        credentials_exception = HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-        # * надо проверить функцию(UPD: Вроде работает)
-        try:
-            token_data = AuthService.decode_jwt_token(token, "access")
-            if token_data is None:
-                
-                raise credentials_exception
-            
-            user = await AuthService.get_user_by_id(db, token_data.sub)
-            if user is None:
-                raise credentials_exception
-            return user
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Unexpected error: {e}",
-                headers={"WWW-Authenticate": "Bearer"}
-            )
-        
+  
+        # * get_current_user перенесено в utils
+
     @staticmethod
     async def authenticate_user(db: AsyncSession, user_data):
         try:

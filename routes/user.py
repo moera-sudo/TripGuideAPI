@@ -4,15 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import timedelta, datetime
 
 from config.appsettings import Settings
 from config.database import get_db
 from config.config import uploads_dir
 from models.users import Users
 from schemas.user import UserInfo
-from services.AuthService import AuthService
-
+from utils.current_user import get_current_user
 
 router = APIRouter(
     prefix='/user',
@@ -24,7 +22,7 @@ router = APIRouter(
 @router.post('/info', status_code=status.HTTP_202_ACCEPTED)
 async def load_user_info(
     user_data: UserInfo,
-    user: Users = Depends(AuthService.get_current_user),
+    user: Users = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     try:
@@ -55,7 +53,7 @@ async def load_user_info(
 
 # Маршрут для получения информации о пользователе в личном кабе -> настройки
 @router.get('/get_info', response_model=UserInfo, status_code=status.HTTP_200_OK)
-async def get_user_info(user: Users = Depends(AuthService.get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_user_info(user: Users = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     try: 
         return{
             'nickname': user.nickname,
@@ -75,7 +73,7 @@ async def get_user_info(user: Users = Depends(AuthService.get_current_user), db:
 @router.post('/upload_avatar', status_code=status.HTTP_202_ACCEPTED)
 async def upload_avatar(
     file: UploadFile = File(...), 
-    user: Users = Depends(AuthService.get_current_user), 
+    user: Users = Depends(get_current_user), 
     db: AsyncSession = Depends(get_db)
 ):
     # Проверка типа файла
@@ -148,7 +146,7 @@ async def get_avatar(nickname: str, db: AsyncSession = Depends(get_db)):
 
 #Маршрут для получения аватарки по токену
 @router.get('/my_avatar', response_class=FileResponse)
-async def get_my_avatar(user: Users = Depends(AuthService.get_current_user)):
+async def get_my_avatar(user: Users = Depends(get_current_user)):
     try:
         avatar_path = uploads_dir / user.avatar_url
 
@@ -170,7 +168,7 @@ async def get_my_avatar(user: Users = Depends(AuthService.get_current_user)):
         )
     
 @router.delete('/delete_avatar', status_code=status.HTTP_202_ACCEPTED)
-async def delete_avatar(user: Users = Depends(AuthService.get_current_user), db: AsyncSession = Depends(get_db)):
+async def delete_avatar(user: Users = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     try:
         if user.avatar_url != 'default.jpg':
             avatar_path = uploads_dir / user.avatar_url
