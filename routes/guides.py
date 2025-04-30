@@ -1,5 +1,4 @@
 import os
-import re
 import shutil
 from typing import List
 import httpx
@@ -19,10 +18,13 @@ from config.config import content_dir
 from models.users import Users
 from models.guides import Guides
 from models.tags import Tags
+from models.comments import Comment
+from models.commentslikes import CommentsLikes
 from schemas.guides import GuideBase
 from models.guideslikes import GuideLikes
 from models.guidetags import GuideTags
 from utils.current_user import get_current_user
+from utils.comments import build_comment_tree
 from utils.recommendation_service import get_recommendation_service
 from services.RecommendationService import RecommendationService
 from services.GuideService import GuideService
@@ -161,7 +163,7 @@ async def get_guide_logo(guide_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.post("/save_guide", status_code=status.HTTP_201_CREATED)
 async def save_guide(
-    data: GuideBase,
+    data: GuideBase = Depends(GuideBase.as_form),
     logo: UploadFile = File(...),
     tags: List[str] = Form(...),
     db: AsyncSession = Depends(get_db),
@@ -233,7 +235,7 @@ async def save_guide(
 @router.put('/edit/{guide_id}', status_code=status.HTTP_202_ACCEPTED)
 async def edit_guide(
     guide_id: int,
-    data: GuideBase,
+    data: GuideBase = Depends(GuideBase.as_form),
     db: AsyncSession = Depends(get_db),
     user: Users = Depends(get_current_user)):
     
@@ -328,7 +330,7 @@ async def read_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Us
         guide = result.scalar_one_or_none()
 
         if not guide:
-            raise HTTPException(status_code=404, detail="Guide not found")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Guide not found")
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -352,21 +354,32 @@ async def read_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Us
                 )
                 is_liked = result.scalar_one_or_none() is not None
 
+            discussion = [
+                build_comment_tree(comment, user.id if user else None)
+                for comment in sorted(
+                    [c for c in guide.comments if c.parent_id is None],
+                    key=lambda x: x.created_at,
+                    reverse=True
+                )
+            ]
 
             return {
-                "title": guide.title,
-                "description": guide.description,
-                "markdown_text": markdown_text,
-                "author": guide.author.nickname,
-                "liked_by_user": is_liked,
-                "likes_count": guide.like_count,
-                "tags": [tag.name for tag in guide.tags],
-                "created_at": guide.created_at
+                "guide": {
+                    "title": guide.title,
+                    "description": guide.description,
+                    "markdown_text": markdown_text,
+                    "author": guide.author.nickname,
+                    "liked_by_user": is_liked,
+                    "likes_count": guide.like_count,
+                    "tags": [tag.name for tag in guide.tags],
+                    "created_at": guide.created_at
+                },
+                "discussion":discussion
             }
 
         except Exception as e:
             raise HTTPException(
-                status_code=500,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error reading guide file: {e}"
             )
 

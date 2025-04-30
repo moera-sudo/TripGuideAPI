@@ -23,6 +23,7 @@ class Guides(BaseModel):
     # guide_tags = relationship("GuideTag", back_populates="guide", cascade="all, delete-orphan")
     tags = relationship("Tags", secondary="guide_tags", back_populates="guides", lazy="selectin")
     liked_by = relationship("Users", secondary="guide_likes", back_populates="guide_likes", lazy="selectin")
+    comments = relationship("Comment", back_populates="guide")
 
-
+    
 

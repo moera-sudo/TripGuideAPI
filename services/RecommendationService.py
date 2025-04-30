@@ -34,9 +34,9 @@ class RecommendationService:
     MAX_CONCURRENT_EMBEDDINGS = 4
     
     # Веса для разных частей контента
-    TITLE_WEIGHT = 0.5
-    DESCRIPTION_WEIGHT = 0.3
-    TAGS_WEIGHT = 0.2
+    TITLE_WEIGHT = 5
+    DESCRIPTION_WEIGHT = 3
+    TAGS_WEIGHT = 2
 
     def __init__(self):
         try:
@@ -61,30 +61,6 @@ class RecommendationService:
             logger.critical(f"Ошибка инициализации: {e}")
             raise RuntimeError("Не удалось инициализировать сервис рекомендаций")
     
-    def _init_resources(self):
-        """Инициализация ресурсов при создании сервиса"""
-        try:
-            # Модель для эмбеддингов
-            self.embedding_model = SentenceTransformer(self.MODEL_NAME)
-            
-            # Настройки ChromaDB
-            self.chroma_client = chromadb.Client(Settings(
-                chroma_db_impl="duckdb+parquet",
-                persist_directory="./chroma_db"
-            ))
-            
-            # Коллекция в ChromaDB
-            self.collection = self.chroma_client.get_or_create_collection(
-                name=self.COLLECTION_NAME,
-                embedding_function=embedding_functions.SentenceTransformerEmbeddingFunction(
-                    model_name=self.MODEL_NAME
-                )
-            )
-            
-        except Exception as e:
-            logger.critical(f"Ошибка инициализации RecommendationService: {e}")
-            raise RuntimeError("Не удалось инициализировать сервис рекомендаций")
-
     @staticmethod
     def preprocess_text(text: str) -> str:
         """Предварительная обработка текста"""
@@ -185,11 +161,19 @@ class RecommendationService:
     
     def _create_guide_document(self, guide: Guides) -> str:
         """Создание документа для индексации с учетом весов"""
-        title = self.preprocess_text(guide.title) * self.TITLE_WEIGHT
-        desc = self.preprocess_text(guide.description) * self.DESCRIPTION_WEIGHT if guide.description else ""
-        tags = " ".join([self.preprocess_text(tag.name) for tag in guide.tags]) * self.TAGS_WEIGHT if guide.tags else ""
+        parts = []
         
-        return f"{title} {desc} {tags}".strip()
+        if guide.title:
+            parts.extend([self.preprocess_text(guide.title)] * 5)  # title_weight=0.5 → 5 повторов
+            
+        if guide.description:
+            parts.extend([self.preprocess_text(guide.description)] * 3)  # description_weight=0.3 → 3 повтора
+            
+        if guide.tags:
+            tags_text = " ".join(self.preprocess_text(tag.name) for tag in guide.tags)
+            parts.extend([tags_text] * 2)  # tags_weight=0.2 → 2 повтора
+        
+        return " ".join(parts)
     
     async def get_user_recommendations(
         self,

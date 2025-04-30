@@ -13,3 +13,5 @@ aiofiles
 scikit-learn
 chromadb
 sentence_transformers
+pytest
+pytest-asyncio
