@@ -9,3 +9,9 @@ uploads/*
 !uploads/default.jpg
 
 content/*
+
+git rm -r --cached
+
+chroma_db/
+
+chroma_db
