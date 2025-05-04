@@ -18,13 +18,14 @@ from routes.auth import router as AuthRouter
 from routes.user import router as UserRouter
 from routes.guides import router as GuideRouter
 from routes.pages import router as PageRouter
+from routes.comments import router as CommentRouter
 from services.RecommendationService import RecommendationService
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Создание таблиц в БД
     async with engine.begin() as conn:
-        await conn.run_sync(BaseModel.metadata.drop_all)
+        # await conn.run_sync(BaseModel.metadata.drop_all)
         await conn.run_sync(BaseModel.metadata.create_all)
         
     
@@ -92,6 +93,7 @@ app.include_router(AuthRouter)
 app.include_router(UserRouter)
 app.include_router(GuideRouter)
 app.include_router(PageRouter)
+app.include_router(CommentRouter)
 
 app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 

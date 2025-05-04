@@ -10,6 +10,7 @@ from models.guides import Guides
 from models.tags import Tags
 from utils.current_user import get_current_user
 from utils.recommendation_service import get_recommendation_service
+from utils.get_limit import get_limit
 from services.RecommendationService import RecommendationService
 
 router = APIRouter(
@@ -137,7 +138,7 @@ async def get_profile(db: AsyncSession = Depends(get_db), user: Users = Depends(
 # ! надо потестить йоу
 @router.get("/recs", status_code=status.HTTP_200_OK)
 async def get_recommendations(
-    limit: int = 20, 
+    limit: int = Depends(get_limit), 
     db: AsyncSession = Depends(get_db), 
     user: Users = Depends(get_current_user),
     recommendation_service: RecommendationService = Depends(get_recommendation_service)

@@ -175,79 +175,94 @@ class RecommendationService:
         
         return " ".join(parts)
     
-    async def get_user_recommendations(
-        self,
-        db: AsyncSession,
-        user_id: int,
-        limit: int = 10,
-        exclude_liked: bool = True
-    ) -> List[int]:
-        """Получение рекомендаций для пользователя"""
+
+    async def get_user_recommendations(self, db: AsyncSession, user_id: int, limit: int = 10, exclude_liked: bool = True) -> List[int]:
         try:
-            # Контентные рекомендации
-            content_recs = await self._get_content_recommendations(db, user_id, limit, exclude_liked)
+            user_guides = await db.execute(
+            select(Guides.id).where(Guides.author_id == user_id))
+            user_guide_ids = {row[0] for row in user_guides.all()}
+
+            # Получаем лайкнутые гиды
+            liked_guides = await self._get_liked_guides(db, user_id) if exclude_liked else []
+            liked_ids = {g.id for g in liked_guides}
             
-            # Если недостаточно, добавляем рекомендации по тегам
+            # Объединяем исключаемые ID (лайкнутые + свои)
+            exclude_ids = liked_ids.union(user_guide_ids)
+            
+            # Основные рекомендации
+            content_recs = await self._get_content_recommendations(
+                db, user_id, limit + len(exclude_ids), exclude_ids)
+            content_recs = [id for id in content_recs if id not in exclude_ids][:limit]
+            
+            # Дополняем при необходимости
             if len(content_recs) < limit:
-                tag_recs = await self._get_tag_recommendations(db, user_id, limit - len(content_recs), exclude_liked)
+                tag_recs = await self._get_tag_recommendations(
+                    db, user_id, limit - len(content_recs), exclude_ids)
+                tag_recs = [id for id in tag_recs if id not in exclude_ids][:limit - len(content_recs)]
                 content_recs.extend(tag_recs)
             
-            # Если все еще недостаточно, добавляем популярные
             if len(content_recs) < limit:
-                popular_recs = await self._get_popular_guides(db, limit - len(content_recs))
+                popular_recs = await self._get_popular_guides_excluding(
+                    db, limit - len(content_recs), exclude_ids)
                 content_recs.extend(popular_recs)
             
             return content_recs[:limit]
-            
+
+
         except Exception as e:
-            logger.error(f"Ошибка рекомендаций для пользователя {user_id}: {e}")
-            return await self._get_popular_guides(db, limit)
-    
+            logger.error(f"Recommendation error for user {user_id}: {e}")
+            return await self._get_popular_guides_excluding(db, limit, exclude_ids)
+
+
     async def _get_content_recommendations(
         self,
         db: AsyncSession,
         user_id: int,
         limit: int,
-        exclude_liked: bool
+        exclude_ids: Set[int]
     ) -> List[int]:
-        """Рекомендации на основе контента"""
+        """Рекомендации на основе контента с исключением указанных ID"""
         liked_guides = await self._get_liked_guides(db, user_id)
         if not liked_guides:
             return []
-            
-        # Создаем запрос из лайкнутых путеводителей
+        
         query_parts = [self._create_guide_document(g) for g in liked_guides]
         query_text = " ".join([p for p in query_parts if p])
         
         if not query_text:
             return []
-            
-        # Исключаем лайкнутые
-        liked_ids = [g.id for g in liked_guides] if exclude_liked else []
-        where = {"guide_id": {"$nin": liked_ids}} if liked_ids else None
         
-        # Запрос к ChromaDB
+        # Фильтрация на стороне ChromaDB
+        where = {"guide_id": {"$nin": list(exclude_ids)}} if exclude_ids else None
+        
         results = self.collection.query(
             query_texts=[query_text],
-            n_results=limit + len(liked_ids),
+            n_results=limit * 2,  # Берем с запасом
             where=where
         )
         
-        return [m["guide_id"] for m in results["metadatas"][0] if m and "guide_id" in m][:limit]
-    
+        recommended_ids = []
+        if results and results.get('metadatas'):
+            for metadata in results['metadatas'][0]:
+                if metadata and 'guide_id' in metadata and metadata['guide_id'] not in exclude_ids:
+                    recommended_ids.append(metadata['guide_id'])
+                    if len(recommended_ids) >= limit:
+                        break
+        
+        return recommended_ids
+
     async def _get_tag_recommendations(
         self,
         db: AsyncSession,
         user_id: int,
         limit: int,
-        exclude_liked: bool
+        exclude_ids: Set[int]
     ) -> List[int]:
-        """Рекомендации на основе тегов"""
+        """Рекомендации по тегам с исключением указанных ID"""
         liked_guides = await self._get_liked_guides(db, user_id)
         if not liked_guides:
             return []
             
-        # Собираем популярные теги
         tag_counts = {}
         for guide in liked_guides:
             for tag in guide.tags:
@@ -256,7 +271,6 @@ class RecommendationService:
         if not tag_counts:
             return []
             
-        # Ищем путеводители с этими тегами
         top_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:3]
         tag_ids = [tag_id for tag_id, _ in top_tags]
         
@@ -264,15 +278,28 @@ class RecommendationService:
             select(Guides.id)
             .join(GuideTags)
             .where(GuideTags.tag_id.in_(tag_ids))
+            .where(Guides.id.notin_(exclude_ids))
             .group_by(Guides.id)
             .order_by(func.count().desc())
             .limit(limit)
         )
         
-        if exclude_liked:
-            liked_ids = [g.id for g in liked_guides]
-            stmt = stmt.where(Guides.id.notin_(liked_ids))
-            
+        result = await db.execute(stmt)
+        return [row[0] for row in result.all()]
+
+    async def _get_popular_guides_excluding(
+        self,
+        db: AsyncSession,
+        limit: int,
+        exclude_ids: Set[int]
+    ) -> List[int]:
+        """Популярные путеводители с исключением указанных ID"""
+        stmt = (
+            select(Guides.id)
+            .where(Guides.id.notin_(exclude_ids))
+            .order_by(Guides.like_count.desc())
+            .limit(limit)
+        )
         result = await db.execute(stmt)
         return [row[0] for row in result.all()]
     

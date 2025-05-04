@@ -319,19 +319,29 @@ async def delete_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: 
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f'Error while deleting guide: {e}'
         )  
-
 @router.get("/read_guide/{guide_id}", status_code=status.HTTP_200_OK)
 async def read_guide(guide_id: int, db: AsyncSession = Depends(get_db), user: Users = Depends(get_current_user)):
-
     try:
         result = await db.execute(
-            select(Guides).where(Guides.id == guide_id).options(selectinload(Guides.author), selectinload(Guides.tags))
+            select(Guides)
+            .where(Guides.id == guide_id)
+            .options(
+                selectinload(Guides.author),
+                selectinload(Guides.tags),
+                selectinload(Guides.comments)
+                    .selectinload(Comment.author),  # автор комментария
+                selectinload(Guides.comments)
+                    .selectinload(Comment.liked_by),  # лайки на комментарии
+                selectinload(Guides.comments)
+                    .selectinload(Comment.replies)  # ответы на комментарии
+            )
         )
         guide = result.scalar_one_or_none()
 
         if not guide:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Guide not found")
     except Exception as e:
+        print(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f'Error while reading guide: {e}'

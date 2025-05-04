@@ -27,11 +27,9 @@ class Users(BaseModel):
     refresh_tokens = relationship("RefreshTokens", back_populates="user", cascade="all, delete-orphan")
     guides = relationship("Guides", back_populates="author", cascade="all, delete-orphan", lazy="selectin")
     guide_likes = relationship("Guides", secondary="guide_likes", back_populates="liked_by", lazy="selectin")
-    comments = relationship("Comment", back_populates="author", cascade="all, delete-orphan")
+    comments = relationship("Comment", back_populates="author", lazy="selectin",  cascade="all, delete-orphan")
     comment_likes = relationship(
         "Comment",
         secondary="comments_likes",
         back_populates="liked_by",
         lazy="selectin")
-
-

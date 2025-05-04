@@ -41,10 +41,10 @@ router = APIRouter(
 @router.post("/add", status_code=status.HTTP_201_CREATED)
 async def create_comment(
     data: CommentCreate, db: AsyncSession = Depends(get_db), user: Users = Depends(get_current_user)
-):
+): 
     try:
 
-        guide = await GuideService.get_guide_by_id(db, data.guide_id, user)
+        guide = await GuideService.get_guide_by_id(db, data.guide_id)
 
         if not guide:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Guide not found")

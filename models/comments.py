@@ -15,20 +15,23 @@ class Comment(BaseModel):
     parent_id = Column(Integer, ForeignKey('comments.id'))
     
     # Relationships
-    guide = relationship("Guides", back_populates="comments")
-    author = relationship("Users", back_populates="comments")
+    guide = relationship("Guides", back_populates="comments", lazy="selectin")
+    author = relationship("Users", back_populates="comments", lazy="selectin")
     replies = relationship("Comment", 
                          back_populates="parent",
+                         lazy="selectin",
                          cascade="all, delete",
                          order_by="Comment.created_at")
     parent = relationship("Comment", 
                         back_populates="replies",
-                        remote_side=[id])
+                        remote_side=[id],
+                        lazy="selectin")
     liked_by = relationship(
         "Users",
         secondary="comments_likes",
-        back_populates="comment_likes"
+        back_populates="comment_likes",
+        lazy="selectin"
     )
     
-    def __repr__(self):
+    def repr(self):
         return f"<Comment {self.id} by {self.author_id}>"
